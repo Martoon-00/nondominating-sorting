@@ -1,11 +1,9 @@
 import com.sun.istack.internal.Nullable;
-import javafx.collections.ListChangeListener;
+import com.sun.javafx.geom.transform.Identity;
 
 import java.util.*;
-import java.util.concurrent.FutureTask;
 import java.util.function.*;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 /**
  * Created by Martoon.
@@ -25,6 +23,9 @@ public class Nondominated {
      * Type aliases
      */
     static class Point {
+        private static final int COORD_X = 0;
+        private static final int COORD_Y = 1;
+
         private final List<Integer> coords;
 
         public Point(List<Integer> coords) {
@@ -39,9 +40,9 @@ public class Nondominated {
             boolean meetStrict = false;
             for (int i = 0; i < this.coords.size(); i++) {
                 int cmp = this.getCoord(i).compareTo(o.getCoord(i));
-                if (cmp == 1) {
+                if (cmp > 0) {
                     return false;
-                } else if (cmp == -1) {
+                } else if (cmp < 0) {
                     meetStrict = true;
                 }
             }
@@ -87,6 +88,7 @@ public class Nondominated {
     }
 
     static class SacSolver extends Solver {
+
         public SacSolver(List<Point> points) {
             super(points);
         }
@@ -158,12 +160,106 @@ public class Nondominated {
         }
 
         private void sortSweep(List<Integer> ids) {
-            // TODO: smth here
+            ids.sort(lexSortComparator);
+
+            // line :: (Y, Rank) -> Id
+            TreeMap<Integer, Integer> line = new TreeMap<>();
+            // tree :: SegmentTree<K = Y, V = Id, M = max Rank>
+            SegmentTree<Integer, Integer, Integer> ranksTree = SegmentTree.make(this::getY, Function.identity(), Math::max, ids);
+
+            for (Integer id : ids) {
+                Integer key = getY(id);
+                Integer higherPoint = line.higherEntry(key).getValue();
+
+                int newRank = getNextRankAfter(ranksTree, id);
+
+                if (higherPoint != null && newRank == ranks.get(higherPoint)) {
+                    removePoint(line, ranksTree, null, higherPoint);
+                }
+
+                ranks.set(id, newRank);
+                insertPoint(line, ranksTree, null, id);
+            }
         }
 
-        private void updateSweep(List<Integer> known, List<Integer> request) {
-            // TODO: smth here
+        private void updateSweep(List<Integer> knowns, List<Integer> requests) {
+            knowns.sort(lexSortComparator);
+            requests.sort(lexSortComparator);
+
+            // line :: (Y, Rank) -> Id
+            TreeMap<Integer, Integer> line = new TreeMap<>();
+            // tree :: SegmentTree<K = Y, V = Id, M = max Rank>
+            SegmentTree<Integer, Integer, Integer> ranksTree = SegmentTree.make(this::getY, Function.identity(), Math::max, knowns);
+            // front :: Rank -> @Nullable Id
+            Integer[] front = new Integer[10000]; // TODO: optimize!!
+
+            int iKnown = 0;
+            for (Integer req : requests) {
+                while (iKnown < knowns.size() && lexSortComparator.compare(knowns.get(iKnown), req) < 0) {
+                    Integer known = knowns.get(iKnown);
+                    iKnown++;
+
+                    // processing known point
+                    int rank = ranks.get(known);
+                    Integer oldKnown = front[rank];
+                    if (oldKnown == null) {
+                        insertPoint(line, ranksTree, front, known);
+                    } else if (getY(oldKnown) < getY(known)) {
+                        removePoint(line, ranksTree, front, oldKnown);
+                        insertPoint(line, ranksTree, front, known);
+                    } else {
+                    }
+                }
+
+                // processing request point
+                int newRank = getNextRankAfter(ranksTree, req);
+                ranks.set(req, newRank);
+            }
         }
+
+        private int getNextRankAfter(SegmentTree<Integer, Integer, Integer> ranksTree, Integer id) {
+            Integer maxRank = ranksTree.request(new Range<>(Integer.MIN_VALUE, getY(id)));
+            return maxRank == null ? 0 : maxRank + 1;
+        }
+
+        private void insertPoint(TreeMap<Integer, Integer> line, SegmentTree<Integer, Integer, Integer> ranksTree, Integer[] front, Integer id) {
+            if (line != null) {
+                line.put(getY(id), id);
+            }
+            if (ranksTree != null) {
+                ranksTree.put(id);
+            }
+            if (front != null) {
+                front[ranks.get(id)] = id;
+            }
+        }
+
+        private void removePoint(TreeMap<Integer, Integer> line, SegmentTree<Integer, Integer, Integer> ranksTree, Integer[] front, Integer id) {
+            if (line != null) {
+                line.remove(getY(id));
+            }
+            if (ranksTree != null) {
+                ranksTree.remove(id);
+            }
+            if (front != null) {
+                front[ranks.get(id)] = null;
+            }
+        }
+
+        private Integer getY(Integer id) {
+            return points.get(id).getCoord(Point.COORD_Y);
+        }
+
+        private final Comparator<Integer> lexSortComparator = (id1, id2) -> {
+            Point p1 = points.get(id1);
+            Point p2 = points.get(id2);
+            int x1 = p1.getCoord(Point.COORD_X);
+            int y1 = p1.getCoord(Point.COORD_Y);
+            int x2 = p2.getCoord(Point.COORD_X);
+            int y2 = p2.getCoord(Point.COORD_Y);
+            return x1 == x2 ? y2 - y1 : x2 - x1;
+        };
+
     }
 
     static class DumbSolver extends Solver {
@@ -256,7 +352,7 @@ public class Nondominated {
             return tree.request(range);
         }
 
-        public void add(V value) {
+        public void put(V value) {
             tree.modify(getKey.apply(value), s -> s.add(value));
         }
 
@@ -396,6 +492,7 @@ public class Nondominated {
     /**
      * Helper in benchmarking.
      */
+    @SuppressWarnings("unused")
     static class Timer implements AutoCloseable {
         private final String name;
         private final long startTime;
@@ -542,6 +639,24 @@ public class Nondominated {
         }
     }
 
+    @SuppressWarnings("unused")
+    static class Logging {
+        private static Set<String> shownLoggers = new TreeSet<>();
+
+        private final String name;
+
+        public Logging(String name) {
+            this.name = name;
+        }
+
+        public void log(String msg) {
+            if (shownLoggers.contains(name)) {
+                System.out.println(msg);
+            }
+        }
+    }
+
+    @SuppressWarnings("unused")
     static class TestSegmentTree {
         public static void testSum(int seed, int n) {
             new Gen(seed) {{
@@ -554,7 +669,7 @@ public class Nondominated {
                 SegmentTree<Integer, Integer, Integer> tree =
                         SegmentTree.make(Function.identity(), Function.identity(), Integer::sum, input);
                 for (Integer v : chosen) {
-                    tree.add(v);
+                    tree.put(v);
                 }
                 ArrayList<Integer> segTreeResults = new ArrayList<>();
                 for (Range<Integer> request : requests) {
