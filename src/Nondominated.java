@@ -1,30 +1,212 @@
 import com.sun.istack.internal.Nullable;
+import javafx.collections.ListChangeListener;
 
 import java.util.*;
+import java.util.concurrent.FutureTask;
 import java.util.function.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Created by Martoon.
  */
 public class Nondominated {
+
     public static void main(String[] args) {
-        TestSegmentTree.seriesTestSum(100000, 1000);
+        int d = 4;
+        List<Point> points = TestSort.genPoints(234439, d, 5);
+        List<Integer> ranks = new DumbSolver(points).solve(d);
+        for (int i = 0; i < points.size(); i++) {
+            System.out.println(points.get(i) + ": " + ranks.get(i));
+        }
     }
 
-    static <T> T findMedian(List<T> list) {
-        if (list.size() < 25) {
-            list.sort(null);
-            return list.get(list.size() / 2);
+    /**
+     * Type aliases
+     */
+    static class Point {
+        private final List<Integer> coords;
+
+        public Point(List<Integer> coords) {
+            this.coords = coords;
         }
 
-        ArrayList<T> result = new ArrayList<>();
-        for (int i = 0; i + 5 < list.size(); i += 5) {
-            List<T> sub = list.subList(i, i + 5);
-            sub.sort(null);
-            result.add(sub.get(2));
+        public Integer getCoord(int d) {
+            return coords.get(d);
         }
-        return findMedian(result);
+
+        public boolean dominates(Point o) {
+            boolean meetStrict = false;
+            for (int i = 0; i < this.coords.size(); i++) {
+                int cmp = this.getCoord(i).compareTo(o.getCoord(i));
+                if (cmp == 1) {
+                    return false;
+                } else if (cmp == -1) {
+                    meetStrict = true;
+                }
+            }
+            return meetStrict;
+        }
+
+        @Override
+        public String toString() {
+            return coords.stream()
+                    .map(Object::toString)
+                    .collect(Collectors.joining(", ", "(", ")"));
+        }
+    }
+
+    /**
+     * Solution
+     */
+
+    static abstract class Solver {
+        protected final List<Point> points;
+        protected final List<Integer> ranks;
+
+        public Solver(List<Point> points) {
+            this(points, new ArrayList<>(Collections.nCopies(points.size(), 0)));
+        }
+
+        public Solver(List<Point> points, List<Integer> ranks) {
+            this.points = points;
+            this.ranks = ranks;
+        }
+
+        protected abstract void solveForIds(int dimensions, ArrayList<Integer> ids);
+
+        public List<Integer> solve(int dimensions) {
+            ArrayList<Integer> ids = new ArrayList<>();
+            for (int i = 0; i < points.size(); i++) {
+                ids.add(i);
+            }
+            solveForIds(dimensions, ids);
+
+            return new ArrayList<>(ranks);
+        }
+    }
+
+    static class SacSolver extends Solver {
+        public SacSolver(List<Point> points) {
+            super(points);
+        }
+
+        public SacSolver(List<Point> points, List<Integer> ranks) {
+            super(points, ranks);
+        }
+
+        @Override
+        protected void solveForIds(int dimensions, ArrayList<Integer> ids) {
+            sortSAC(dimensions, ids);
+        }
+
+        private void sortSAC(int dimension, List<Integer> ids) {
+            if (dimension <= 1)
+                throw new IllegalArgumentException("Can't solve for so few dimensions");
+            else if (dimension == 2) {
+                sortSweep(ids);
+            } else {  // TODO: dump sort
+                // Helpers
+                Function<Integer, Integer> getPointCoord = id -> points.get(id).getCoord(dimension - 1);
+
+                // Get median
+                ArrayList<Integer> coords = new ArrayList<>();
+                for (Integer id : ids) {
+                    coords.add(getPointCoord.apply(id));
+                }
+                Integer median = Util.findMedian(coords);
+
+                // Split
+                Util.SplitResult<Integer> split = Util.split(ids, id -> coords.get(id).compareTo(median));
+
+                // Call recursively
+                sortSAC(dimension, split.L);
+                updateSAC(dimension, split.L, split.M);
+                sortSAC(dimension - 1, split.M);
+                updateSAC(dimension, Util.concat(split.L, split.M), split.R);
+                sortSAC(dimension, split.R);
+            }
+
+        }
+
+        private void updateSAC(int dimension, List<Integer> known, List<Integer> request) {
+            if (dimension <= 1)
+                throw new IllegalArgumentException("Can't solve for so few dimensions");
+            else if (dimension == 2) {
+                updateSweep(known, request);
+            } else {  // TODO: dump sort
+                // Helpers
+                Function<Integer, Integer> getPointCoord = id -> points.get(id).getCoord(dimension - 1);
+
+                // Get median
+                ArrayList<Integer> coords = new ArrayList<>();
+                for (Integer req : request) {
+                    coords.add(getPointCoord.apply(req));
+                }
+                Integer median = Util.findMedian(coords);
+
+                Util.SplitResult<Integer> knownSplit = Util.split(known, id -> coords.get(id).compareTo(median));
+                Util.SplitResult<Integer> requestSplit = Util.split(known, id -> coords.get(id).compareTo(median));
+
+                updateSAC(dimension, knownSplit.L, requestSplit.L);
+                updateSAC(dimension - 1, knownSplit.L, requestSplit.M);
+                updateSAC(dimension - 1, knownSplit.M, requestSplit.M);
+                updateSAC(dimension - 1, Util.concat(knownSplit.L, knownSplit.M), requestSplit.R);
+                updateSAC(dimension, knownSplit.R, requestSplit.R);
+            }
+
+        }
+
+        private void sortSweep(List<Integer> ids) {
+            // TODO: smth here
+        }
+
+        private void updateSweep(List<Integer> known, List<Integer> request) {
+            // TODO: smth here
+        }
+    }
+
+    static class DumbSolver extends Solver {
+        public DumbSolver(List<Point> points) {
+            super(points);
+        }
+
+        public DumbSolver(List<Point> points, List<Integer> ranks) {
+            super(points, ranks);
+        }
+
+        @Override
+        protected void solveForIds(int dimensions, ArrayList<Integer> ids) {
+            sortDumb(ids);
+        }
+
+        public void sortDumb(List<Integer> points) {
+            updateDumb(Collections.emptyList(), points);
+        }
+
+        public void updateDumb(List<Integer> known, List<Integer> request) {
+            ArrayList<Util.Cached<Integer>> rankEvals = new ArrayList<>();
+            for (Integer req : request) {
+                Util.Cached<Integer> eval = new Util.Cached<>(() -> {
+                    int[] maxRank = {-1};
+                    Consumer<Integer> updateRank = id -> {
+                        if (points.get(id).dominates(points.get(req))) {
+                            maxRank[0] = Math.max(maxRank[0], rankEvals.get(id).get());
+                        }
+                    };
+                    known.forEach(updateRank);
+                    request.forEach(updateRank);
+                    return maxRank[0] + 1;
+                });
+                rankEvals.add(eval);
+            }
+
+            for (int i = 0; i < request.size(); i++) {
+                Integer id = request.get(i);
+                Util.Cached<Integer> rankEval = rankEvals.get(i);
+                ranks.set(id, rankEval.get());
+            }
+        }
     }
 
     /**
@@ -245,6 +427,21 @@ public class Nondominated {
      * Class with utility functions.
      */
     static class Util {
+        static <T> T findMedian(List<T> list) {
+            if (list.size() < 25) {
+                list.sort(null);
+                return list.get(list.size() / 2);
+            }
+
+            ArrayList<T> result = new ArrayList<>();
+            for (int i = 0; i + 5 < list.size(); i += 5) {
+                List<T> sub = list.subList(i, i + 5);
+                sub.sort(null);
+                result.add(sub.get(2));
+            }
+            return findMedian(result);
+        }
+
         public static <V> List<V> removeAdjacentDuplicates(List<V> list) {
             ArrayList<V> unique = new ArrayList<>();
             unique.add(list.get(0));
@@ -254,6 +451,47 @@ public class Nondominated {
                 }
             }
             return unique;
+        }
+
+        public static <V> List<V> concat(List<V> list1, List<V> list2) {
+            ArrayList<V> result = new ArrayList<>(list1);
+            result.addAll(list2);
+            return result;
+        }
+
+        public static class SplitResult<V> {
+            public final List<V> L = new ArrayList<>();
+            public final List<V> M = new ArrayList<>();
+            public final List<V> R = new ArrayList<>();
+        }
+
+        public static <V> SplitResult<V> split(List<V> list, Function<V, Integer> comparator) {
+            SplitResult<V> result = new SplitResult<>();
+            for (V value : list) {
+                int cmp = comparator.apply(value);
+                if (cmp < 0) {
+                    result.L.add(value);
+                } else if (cmp == 0) {
+                    result.M.add(value);
+                } else {
+                    result.R.add(value);
+                }
+            }
+            return result;
+        }
+
+        public static class Cached<V> implements Supplier<V> {
+            private V cache = null;
+            private final Supplier<V> evaluate;
+
+            public Cached(Supplier<V> evaluate) {
+                this.evaluate = evaluate;
+            }
+
+            @Override
+            public V get() {
+                return cache != null ? cache : (cache = evaluate.get());
+            }
         }
     }
 
@@ -297,6 +535,10 @@ public class Nondominated {
 
         protected <V extends Comparable<V>> Supplier<Range<V>> rangeOf(Supplier<V> gen) {
             return () -> new Range<>(gen.get(), gen.get());
+        }
+
+        protected static <A, B> Supplier<B> map(Function<A, B> mapper, Supplier<A> sup) {
+            return () -> mapper.apply(sup.get());
         }
     }
 
@@ -359,6 +601,19 @@ public class Nondominated {
                 System.out.println("Iteration #" + i);
                 TestSegmentTree.testSum(i, n);
             }
+        }
+
+        public static void seriesTestSum() {
+            seriesTestSum(100000, 10000);
+        }
+
+    }
+
+    public static class TestSort {
+        public static List<Point> genPoints(int seed, int d, int n) {
+            return new Gen(seed) {
+                List<Point> points = vectorOf(n, map(Point::new, vectorOf(d, integer(10)))).get();
+            }.points;
         }
     }
 
