@@ -29,4 +29,8 @@ hs_err_pid*
 *.iml
 .idea/*
 
+# Input / output files #
+*.in
+*.out
+
 # End of https://www.gitignore.io/api/java

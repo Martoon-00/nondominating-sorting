@@ -1,6 +1,8 @@
 import com.sun.istack.internal.Nullable;
 import com.sun.javafx.geom.transform.Identity;
+import sun.rmi.runtime.Log;
 
+import java.io.*;
 import java.util.*;
 import java.util.function.*;
 import java.util.stream.Collectors;
@@ -10,13 +12,48 @@ import java.util.stream.Collectors;
  */
 public class Nondominated {
 
-    public static void main(String[] args) {
-        int d = 4;
-        List<Point> points = TestSort.genPoints(234439, d, 5);
-        List<Integer> ranks = new DumbSolver(points).solve(d);
-        for (int i = 0; i < points.size(); i++) {
-            System.out.println(points.get(i) + ": " + ranks.get(i));
+    public static void main(String[] args) throws IOException {
+        //noinspection ArraysAsListWithZeroOrOneArgument
+        Logging.shownLoggers = new TreeSet<>(
+                Arrays.asList(
+//                        "sortSweep",
+//                        "updateSweep"
+                ));
+
+//        interractAndSolve();
+
+        TestSort.seriesTestSolver(2, 3, 1000);
+    }
+
+    public static void interractAndSolve() throws IOException {
+        List<Point> points = readPoints(new File("sorting.in"));
+
+        Solver solver = new SacSolver(points);
+        List<Integer> ranks = solver.solve();
+
+        for (Integer rank : ranks) {
+            PrintStream out = new PrintStream("sorting.out");
+            out.print(rank + " ");
         }
+    }
+
+    public static List<Point> readPoints(File file) throws IOException {
+        ArrayList<Point> points = new ArrayList<>();
+        try (BufferedReader in = new BufferedReader(new FileReader(file))) {
+            String[] header = in.readLine().split("\\s+");
+            int n = Integer.parseInt(header[0]);
+            int d = Integer.parseInt(header[1]);
+
+            String line;
+            while ((line = in.readLine()) != null) {
+                ArrayList<Integer> coord = new ArrayList<>();
+                for (String s : line.split("\\s+")) {
+                    coord.add(Integer.parseInt(s));
+                }
+                points.add(new Point(coord));
+            }
+        }
+        return points;
     }
 
     /**
@@ -34,6 +71,10 @@ public class Nondominated {
 
         public Integer getCoord(int d) {
             return coords.get(d);
+        }
+
+        public int getDimensions() {
+            return coords.size();
         }
 
         public boolean dominates(Point o) {
@@ -72,16 +113,19 @@ public class Nondominated {
         public Solver(List<Point> points, List<Integer> ranks) {
             this.points = points;
             this.ranks = ranks;
+
+            if (points.isEmpty())
+                throw new IllegalArgumentException("Can't solve for no points");
         }
 
         protected abstract void solveForIds(int dimensions, ArrayList<Integer> ids);
 
-        public List<Integer> solve(int dimensions) {
+        public List<Integer> solve() {
             ArrayList<Integer> ids = new ArrayList<>();
             for (int i = 0; i < points.size(); i++) {
                 ids.add(i);
             }
-            solveForIds(dimensions, ids);
+            solveForIds(points.get(0).getDimensions(), ids);
 
             return new ArrayList<>(ranks);
         }
@@ -103,6 +147,8 @@ public class Nondominated {
         }
 
         private void sortSAC(int dimension, List<Integer> ids) {
+            Logging logger = new Logging("sortSAC");
+
             if (dimension <= 1)
                 throw new IllegalArgumentException("Can't solve for so few dimensions");
             else if (dimension == 2) {
@@ -120,6 +166,7 @@ public class Nondominated {
 
                 // Split
                 Util.SplitResult<Integer> split = Util.split(ids, id -> coords.get(id).compareTo(median));
+                logger.log("sort: Split to " + split);
 
                 // Call recursively
                 sortSAC(dimension, split.L);
@@ -160,18 +207,28 @@ public class Nondominated {
         }
 
         private void sortSweep(List<Integer> ids) {
+            Logging logger = new Logging("sortSweep");
+
             ids.sort(lexSortComparator);
+            logger.log("Sweeping for " + ids.stream().map(points::get).collect(Collectors.toList()));
 
             // line :: (Y, Rank) -> Id
             TreeMap<Integer, Integer> line = new TreeMap<>();
             // tree :: SegmentTree<K = Y, V = Id, M = max Rank>
-            SegmentTree<Integer, Integer, Integer> ranksTree = SegmentTree.make(this::getY, Function.identity(), Math::max, ids);
+            SegmentTree<Integer, Integer, Integer> ranksTree = makeRanksTree(ids);
 
             for (Integer id : ids) {
+                logger.log(() -> "for " + points.get(id));
+                logger.log(() -> "line " + line);
+                logger.log(() -> "ranks tree " + ranksTree);
+                logger.log("");
+
                 Integer key = getY(id);
-                Integer higherPoint = line.higherEntry(key).getValue();
+                Map.Entry<Integer, Integer> higherEntry = line.higherEntry(key);
+                Integer higherPoint = higherEntry == null ? null : higherEntry.getValue();
 
                 int newRank = getNextRankAfter(ranksTree, id);
+                logger.log(() -> "new rank " + newRank);
 
                 if (higherPoint != null && newRank == ranks.get(higherPoint)) {
                     removePoint(line, ranksTree, null, higherPoint);
@@ -183,13 +240,17 @@ public class Nondominated {
         }
 
         private void updateSweep(List<Integer> knowns, List<Integer> requests) {
+            Logging logger = new Logging("updateSweep");
+
             knowns.sort(lexSortComparator);
             requests.sort(lexSortComparator);
+            logger.log("Sweeping for " + knowns.stream().map(points::get).collect(Collectors.toList())
+                    + "\n  " + requests.stream().map(points::get).collect(Collectors.toList()));
 
             // line :: (Y, Rank) -> Id
             TreeMap<Integer, Integer> line = new TreeMap<>();
             // tree :: SegmentTree<K = Y, V = Id, M = max Rank>
-            SegmentTree<Integer, Integer, Integer> ranksTree = SegmentTree.make(this::getY, Function.identity(), Math::max, knowns);
+            SegmentTree<Integer, Integer, Integer> ranksTree = makeRanksTree(knowns);
             // front :: Rank -> @Nullable Id
             Integer[] front = new Integer[10000]; // TODO: optimize!!
 
@@ -215,6 +276,10 @@ public class Nondominated {
                 int newRank = getNextRankAfter(ranksTree, req);
                 ranks.set(req, newRank);
             }
+        }
+
+        private SegmentTree<Integer, Integer, Integer> makeRanksTree(List<Integer> ids) {
+            return SegmentTree.make(this::getY, ranks::get, Math::max, ids);
         }
 
         private int getNextRankAfter(SegmentTree<Integer, Integer, Integer> ranksTree, Integer id) {
@@ -257,7 +322,7 @@ public class Nondominated {
             int y1 = p1.getCoord(Point.COORD_Y);
             int x2 = p2.getCoord(Point.COORD_X);
             int y2 = p2.getCoord(Point.COORD_Y);
-            return x1 == x2 ? y2 - y1 : x2 - x1;
+            return x1 == x2 ? y1 - y2 : x1 - x2;
         };
 
     }
@@ -378,6 +443,8 @@ public class Nondominated {
             public abstract M request(Range<K> reqRange);
 
             public abstract void modify(K key, Consumer<Set<V>> modifier);
+
+            public abstract void forEach(Consumer<V> consumer);
         }
 
         private class Leaf extends Tree {
@@ -412,6 +479,11 @@ public class Nondominated {
                             ? summary2
                             : addSummaries.apply(this.summary, summary2);
                 }
+            }
+
+            @Override
+            public void forEach(Consumer<V> consumer) {
+                values.forEach(consumer);
             }
         }
 
@@ -453,6 +525,19 @@ public class Nondominated {
                 }
                 this.summary = addSummaries.apply(left.summary, right.summary);
             }
+
+            @Override
+            public void forEach(Consumer<V> consumer) {
+                left.forEach(consumer);
+                right.forEach(consumer);
+            }
+        }
+
+        @Override
+        public String toString() {
+            ArrayList<V> values = new ArrayList<>();
+            tree.forEach(values::add);
+            return values.toString();
         }
     }
 
@@ -560,6 +645,11 @@ public class Nondominated {
             public final List<V> L = new ArrayList<>();
             public final List<V> M = new ArrayList<>();
             public final List<V> R = new ArrayList<>();
+
+            @Override
+            public String toString() {
+                return String.format("\n  {%s,\n  %s,\n  %s\n  }", L, M, R);
+            }
         }
 
         public static <V> SplitResult<V> split(List<V> list, Function<V, Integer> comparator) {
@@ -649,11 +739,16 @@ public class Nondominated {
             this.name = name;
         }
 
-        public void log(String msg) {
+        public void log(Supplier<String> msg) {
             if (shownLoggers.contains(name)) {
-                System.out.println(msg);
+                System.out.println(name + ": " + msg.get());
             }
         }
+
+        public void log (String msg) {
+            log(() -> msg);
+        }
+
     }
 
     @SuppressWarnings("unused")
@@ -729,6 +824,45 @@ public class Nondominated {
             return new Gen(seed) {
                 List<Point> points = vectorOf(n, map(Point::new, vectorOf(d, integer(10)))).get();
             }.points;
+        }
+
+        public static void testSolver(int seed, int d, int n) {
+            List<Point> points = genPoints(seed, d, n);
+
+            Solver dumbSolver = new DumbSolver(points);
+            List<Integer> dumbAns = dumbSolver.solve();
+
+            Solver sacSolver = new SacSolver(points);
+            List<Integer> sacAns = sacSolver.solve();
+
+            if (dumbAns.equals(sacAns)) {
+                System.out.println("Solved OK!");
+            } else {
+                for (int i = 0; i < dumbAns.size(); i++) {
+                    if (!Objects.equals(dumbAns.get(i), sacAns.get(i))) {
+                        System.out.println("Test failure");
+                        System.out.println("For input: " + points);
+                        System.out.println("All ranks expected: " + dumbAns);
+                        System.out.println("All ranks got     : " + sacAns);
+                        System.out.printf("For %dth value expected %s, but got %s%n", i, dumbAns.get(i), sacAns.get(i));
+
+                        try {
+                            Thread.sleep(10);
+                        } catch (InterruptedException ignored) {
+                        }
+                        throw new AssertionError("Test failed");
+                    }
+                }
+
+                throw new IllegalStateException("And where is bad answer??");
+            }
+
+        }
+
+        public static void seriesTestSolver(int d, int n, int times) {
+            for (int i = 0; i < times; i++) {
+                testSolver(i, d, n);
+            }
         }
     }
 
