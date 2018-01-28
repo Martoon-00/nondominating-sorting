@@ -9,19 +9,36 @@ import java.util.stream.Collectors;
  * Created by Martoon.
  */
 public class Nondominated {
-    public static int meq = 0;
 
     public static void main(String[] args) throws IOException {
-        interactAndSolve(new File("inputs/problem3.in"), new File("sorting.out"));
+        SacSolver.optimizationEdge = 50;
+
+//        interactAndSolve(new File("sorting.in"), new File("sorting.out"));
 
 //        TestSort.seriesTestSolver(4, 25, 100000);
 //        TestSort.testSolver(19, 3, 3);
 
-//        List<Point> points = TestSort.genPoints(234, 4, 100000);
-//        for (int i = 0; i < 20; i++) {
-//            try (Timer timer = new Timer("Sort")) {
-//                new SacSolver(points).solve();
-//            }
+        List<Point> points = TestSort.genPoints(234, 4, 100000);
+        try {
+            Thread.sleep(10000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+        System.out.println("Starting");
+        new Timer("Sort").invoke(() -> new SacSolver(points).solve());
+
+//        List<Point> points = TestSort.genPoints(234, 2, 3);
+//        for (int i = 0; i < 1000; i += 10) {
+//            System.out.println("For " + i + ":");
+//            SacSolver.optimizationEdge = i;
+//            new Timer("Sort").invoke(5, () -> new SacSolver(points).solve());
+//        }
+
+//        for (int i = 1; i <= 500; i++) {
+//            List<Point> points = TestSort.genPoints(234, 4, i);
+//            System.out.println(i + " points");
+//            new Timer("Dumb").invoke(1000, () -> new DumbSolver(points).solve());
+//            new Timer("Sac").invoke(1000, () -> new SacSolver(points).solve());
 //        }
 
     }
@@ -35,6 +52,23 @@ public class Nondominated {
         try (PrintStream out = new PrintStream(output)) {
             for (Integer rank : ranks) {
                 out.print(rank + " ");
+            }
+        }
+    }
+
+    public static void dumpInput(File file, List<Point> points) throws FileNotFoundException {
+        try (PrintStream out = new PrintStream(file)) {
+            out.print(points.size());
+            out.print(" ");
+            out.print(points.get(0).coords.length);
+            out.println();
+
+            for (Point point : points) {
+                for (Integer coord : point.coords) {
+                    out.print(coord);
+                    out.print(" ");
+                }
+                out.println();
             }
         }
     }
@@ -65,24 +99,20 @@ public class Nondominated {
         private static final int COORD_X = 0;
         private static final int COORD_Y = 1;
 
-        private final List<Integer> coords;
+        private final Integer[] coords;
 
         public Point(List<Integer> coords) {
-            this.coords = coords;
-        }
-
-        public Integer getCoord(int d) {
-            return coords.get(d);
+            this.coords = coords.toArray(new Integer[coords.size()]);
         }
 
         public int getDimensions() {
-            return coords.size();
+            return coords.length;
         }
 
         public boolean dominates(Point o) {
             boolean meetStrict = false;
-            for (int i = 0; i < this.coords.size(); i++) {
-                int cmp = this.getCoord(i).compareTo(o.getCoord(i));
+            for (int i = 0; i < this.coords.length; i++) {
+                int cmp = this.coords[i].compareTo(o.coords[i]);
                 if (cmp > 0) {
                     return false;
                 } else if (cmp < 0) {
@@ -99,12 +129,12 @@ public class Nondominated {
 
             Point point = (Point) o;
 
-            return coords.equals(point.coords);
+            return Arrays.equals(coords, point.coords);
         }
 
         @Override
         public String toString() {
-            return coords.stream()
+            return Arrays.stream(coords)
                     .map(Object::toString)
                     .collect(Collectors.joining(", ", "(", ")"));
         }
@@ -115,66 +145,68 @@ public class Nondominated {
      */
 
     static abstract class Solver {
-        protected final List<Point> points;
-        private final List<Integer> ranks;
+        protected final Point[] points;
+        protected final Integer[] ranks;
 
         public Solver(List<Point> points) {
-            this(points, new ArrayList<>(Collections.nCopies(points.size(), 0)));
+            this(points.toArray(new Point[0]), Collections.nCopies(points.size(), 0).toArray(new Integer[0]));
         }
 
-        public Solver(List<Point> points, List<Integer> ranks) {
+        public Solver(Point[] points, Integer[] ranks) {
             this.points = points;
             this.ranks = ranks;
 
-            if (points.isEmpty())
+            if (points.length == 0)
                 throw new IllegalArgumentException("Can't solve for no points");
         }
 
         public Integer getRank(int i) {
-            return ranks.get(i);
+            return ranks[i];
         }
 
         public void updateRank(int i, int newRank) {
-            ranks.set(i, Math.max(ranks.get(i), newRank));
+            ranks[i] = Math.max(ranks[i], newRank);
         }
 
         protected abstract void solveForIds(List<Integer> ids);
 
         public List<Integer> solve() {
             ArrayList<Integer> ids = new ArrayList<>();
-            for (int i = 0; i < points.size(); i++) {
+            for (int i = 0; i < points.length; i++) {
                 ids.add(i);
             }
             solveForIds(ids);
 
-            return new ArrayList<>(ranks);
+            return Arrays.asList(ranks);
         }
     }
 
+    @SuppressWarnings("StatementWithEmptyBody")
     static class SacSolver extends Solver {
+        private static int optimizationEdge = 1;
 
         public SacSolver(List<Point> points) {
             super(points);
         }
 
-        public SacSolver(List<Point> points, List<Integer> ranks) {
-            super(points, ranks);
-        }
-
         @Override
         protected void solveForIds(List<Integer> ids) {
-            sortSAC(points.get(0).getDimensions(), ids);
+            ids.sort(lexSortComparator);
+            sortSAC(points[0].getDimensions(), ids);
         }
 
         private void sortSAC(int dimension, List<Integer> ids) {
+//            System.out.println("sortSAC " + dimension + " " + ids.size());
+            assert optimizationEdge > 0;
             if (dimension <= 1) {
                 throw new IllegalArgumentException("Can't solve for so few dimensions");
-            } else if (ids.size() <= 1) {
+            } else if (ids.size() <= optimizationEdge) {
+                new DumbSolver(points, ranks).sortDumb(ids);
             } else if (dimension == 2) {
                 sortSweep(ids);
-            } else {  // TODO: dump sort
+            } else {
                 // Helpers
-                Function<Integer, Integer> getPointCoord = id -> points.get(id).getCoord(dimension - 1);
+                Function<Integer, Integer> getPointCoord = id -> points[id].coords[dimension - 1];
 
                 // Get median
                 ArrayList<Integer> zs = new ArrayList<>();
@@ -191,29 +223,34 @@ public class Nondominated {
                 sortSAC(dimension, split.L);
                 updateSAC(dimension, split.L, split.M);
                 sortSAC(dimension - 1, split.M);
-                updateSAC(dimension, Util.concat(split.L, split.M), split.R);
+                updateSAC(dimension, split.L, split.R);
+                updateSAC(dimension, split.M, split.R);
                 sortSAC(dimension, split.R);
             }
 
         }
 
         private void updateSAC(int dimension, List<Integer> known, List<Integer> request) {
+//            System.out.println("updateSAC " + dimension + " " + known.size() + "/" + request.size());
+            assert optimizationEdge >= 0;
             if (dimension <= 1) {
                 throw new IllegalArgumentException("Can't solve for so few dimensions");
-            } else if (known.isEmpty()) {
-            } else if (request.isEmpty()) {
+            } else if (request.isEmpty() || known.isEmpty()) {
+            } else if (known.size() + request.size() <= optimizationEdge) {
+                new DumbSolver(points, ranks).updateDumb(known, request);
             } else if (dimension == 2) {
                 updateSweep(known, request);
-            } else {  // TODO: dump sort
+            } else {
+
                 // Helpers
-                Function<Integer, Integer> getPointCoord = id -> points.get(id).getCoord(dimension - 1);
+                Function<Integer, Integer> getPointCoord = id -> points[id].coords[dimension - 1];
 
                 // Get median
-                ArrayList<Integer> coords = new ArrayList<>();
+                ArrayList<Integer> zs = new ArrayList<>();
                 for (Integer req : request) {
-                    coords.add(getPointCoord.apply(req));
+                    zs.add(getPointCoord.apply(req));
                 }
-                Integer median = Util.findMedian(coords);
+                Integer median = Util.findMedian(zs);
 
                 // Split
                 Function<Integer, Integer> comparingToMedian = id -> getPointCoord.apply(id).compareTo(median);
@@ -224,14 +261,17 @@ public class Nondominated {
                 updateSAC(dimension, knownSplit.L, requestSplit.L);
                 updateSAC(dimension - 1, knownSplit.L, requestSplit.M);
                 updateSAC(dimension - 1, knownSplit.M, requestSplit.M);
-                updateSAC(dimension - 1, Util.concat(knownSplit.L, knownSplit.M), requestSplit.R);
+                updateSAC(dimension - 1, knownSplit.L, requestSplit.R);
+                updateSAC(dimension - 1, knownSplit.M, requestSplit.R);
                 updateSAC(dimension, knownSplit.R, requestSplit.R);
             }
 
         }
 
         private void sortSweep(List<Integer> ids) {
-            ids.sort(lexSortComparator);
+//            System.out.println("sortSweep " + ids.size());
+            if (ids.isEmpty())
+                return;
 
             // line :: (Y, Rank) -> Id
             TreeMap<Integer, Integer> line = new TreeMap<>();
@@ -240,7 +280,7 @@ public class Nondominated {
 
             Integer prevId = null;
             for (Integer id : ids) {
-                if (prevId != null && points.get(prevId).equals(points.get(id))) {
+                if (prevId != null && points[prevId].equals(points[id])) {
                     updateRank(id, getRank(prevId));
                 } else {
                     Integer key = getY(id);
@@ -261,15 +301,16 @@ public class Nondominated {
         }
 
         private void updateSweep(List<Integer> knowns, List<Integer> requests) {
-            knowns.sort(lexSortComparator);
-            requests.sort(lexSortComparator);
+//            System.out.println("updateSweep " + knowns.size() + "/" + requests.size());
+            if (knowns.isEmpty() || requests.isEmpty())
+                return;
 
             // line :: (Y, Rank) -> Id
             TreeMap<Integer, Integer> line = new TreeMap<>();
             // tree :: SegmentTree<K = Y, V = Id, M = max Rank>
             SegmentTree<Integer, Integer, Integer> ranksTree = makeRanksTree(knowns);
             // front :: Rank -> @Nullable Id
-            Integer[] front = new Integer[10000]; // TODO: optimize!!
+            Integer[] front = new Integer[points.length];
 
             int iKnown = 0;
             for (Integer req : requests) {
@@ -285,7 +326,6 @@ public class Nondominated {
                     } else if (getY(oldKnown) > getY(known)) {
                         removePoint(line, ranksTree, front, oldKnown);
                         insertPoint(line, ranksTree, front, known);
-                    } else {
                     }
                 }
 
@@ -329,16 +369,16 @@ public class Nondominated {
         }
 
         private Integer getY(Integer id) {
-            return points.get(id).getCoord(Point.COORD_Y);
+            return points[id].coords[Point.COORD_Y];
         }
 
         private final Comparator<Integer> lexSortComparator = (id1, id2) -> {
-            Point p1 = points.get(id1);
-            Point p2 = points.get(id2);
-            int x1 = p1.getCoord(Point.COORD_X);
-            int y1 = p1.getCoord(Point.COORD_Y);
-            int x2 = p2.getCoord(Point.COORD_X);
-            int y2 = p2.getCoord(Point.COORD_Y);
+            Point p1 = points[id1];
+            Point p2 = points[id2];
+            int x1 = p1.coords[Point.COORD_X];
+            int y1 = p1.coords[Point.COORD_Y];
+            int x2 = p2.coords[Point.COORD_X];
+            int y2 = p2.coords[Point.COORD_Y];
             return x1 == x2 ? y1 - y2 : x1 - x2;
         };
 
@@ -349,7 +389,7 @@ public class Nondominated {
             super(points);
         }
 
-        public DumbSolver(List<Point> points, List<Integer> ranks) {
+        public DumbSolver(Point[] points, Integer[] ranks) {
             super(points, ranks);
         }
 
@@ -358,31 +398,40 @@ public class Nondominated {
             sortDumb(ids);
         }
 
-        public void sortDumb(List<Integer> points) {
-            updateDumb(Collections.emptyList(), points);
+        public void sortDumb(List<Integer> ids) {
+            if (ids.isEmpty())
+                return;
+
+            Util.Cached<Integer>[] rankEvals = new Util.Cached[points.length];
+            for (Integer req : ids) {
+                Util.Cached<Integer> eval = new Util.Cached<>(() -> {
+                    int[] maxRank = {-1};
+                    for (Integer id : ids) {
+                        if (points[id].dominates(points[req])) {
+                            maxRank[0] = Math.max(maxRank[0], rankEvals[id].get());
+                        }
+                    }
+                    return maxRank[0] + 1;
+                });
+                rankEvals[req] = eval;
+            }
+
+            for (Integer id : ids) {
+                Util.Cached<Integer> rankEval = rankEvals[id];
+                updateRank(id, rankEval.get());
+            }
         }
 
         public void updateDumb(List<Integer> known, List<Integer> request) {
-            ArrayList<Util.Cached<Integer>> rankEvals = new ArrayList<>();
-            for (Integer req : request) {
-                Util.Cached<Integer> eval = new Util.Cached<>(() -> {
-                    int[] maxRank = {-1};
-                    Consumer<Integer> updateRank = id -> {
-                        if (points.get(id).dominates(points.get(req))) {
-                            maxRank[0] = Math.max(maxRank[0], rankEvals.get(id).get());
-                        }
-                    };
-                    known.forEach(updateRank);
-                    request.forEach(updateRank);
-                    return maxRank[0] + 1;
-                });
-                rankEvals.add(eval);
-            }
+            if (known.isEmpty())
+                return;
 
-            for (int i = 0; i < request.size(); i++) {
-                Integer id = request.get(i);
-                Util.Cached<Integer> rankEval = rankEvals.get(i);
-                updateRank(id, rankEval.get());
+            for (Integer req : request) {
+                for (Integer kn : known) {
+                    if (points[kn].dominates(points[req])) {
+                        ranks[req] = Math.max(ranks[req], ranks[kn] + 1);
+                    }
+                }
             }
         }
     }
@@ -598,7 +647,7 @@ public class Nondominated {
      * Helper in benchmarking.
      */
     @SuppressWarnings("unused")
-    static class Timer implements AutoCloseable {
+    static class Timer {
         private final String name;
         private final long startTime;
 
@@ -619,9 +668,17 @@ public class Nondominated {
             System.out.printf("%s passed for %s seconds%n", name, getSeconds());
         }
 
-        @Override
-        public void close() {
-            printTime();
+        public void invoke(Runnable run) {
+            invoke(1, run);
+        }
+
+        public void invoke(int times, Runnable run) {
+            for (int i = 0; i < times; i++) {
+                run.run();
+            }
+            long cur = System.currentTimeMillis();
+            double duration = (double) (cur - startTime) / times;
+            System.out.printf("%s passed for %f seconds%n", name, duration / 1000D);
         }
     }
 
@@ -678,13 +735,10 @@ public class Nondominated {
             SplitResult<V> result = new SplitResult<>();
             for (V value : list) {
                 int cmp = comparator.apply(value);
-                if (cmp < 0) {
-                    result.L.add(value);
-                } else if (cmp == 0) {
-                    result.M.add(value);
-                } else {
-                    result.R.add(value);
-                }
+                List<V> toAdd = cmp < 0 ? result.L
+                        : cmp == 0 ? result.M
+                        : result.R;
+                toAdd.add(value);
             }
             return result;
         }
@@ -701,6 +755,32 @@ public class Nondominated {
             public V get() {
                 return cache != null ? cache : (cache = evaluate.get());
             }
+        }
+
+        public static <V> List<V> merge(List<V> list1, List<V> list2, Comparator<V> cmp) {
+            ArrayList<V> result = new ArrayList<>(list1.size() + list2.size());
+            int i = 0;
+            int j = 0;
+            while (true) {
+                if (i >= list1.size()) {
+                    while (j < list2.size())
+                        result.add(list2.get(j));
+                    break;
+                }
+                if (j >= list2.size()) {
+                    while (i < list1.size())
+                        result.add(list1.get(i));
+                    break;
+                }
+                if (cmp.compare(list1.get(i), list2.get(j)) <= 0) {
+                    result.add(list1.get(i));
+                    i++;
+                } else {
+                    result.add(list2.get(j));
+                    j++;
+                }
+            }
+            return result;
         }
     }
 
@@ -822,7 +902,7 @@ public class Nondominated {
     public static class TestSort {
         public static List<Point> genPoints(int seed, int d, int n) {
             return new Gen(seed) {
-                List<Point> points = vectorOf(n, map(Point::new, vectorOf(d, integer(10)))).get();
+                List<Point> points = vectorOf(n, map(Point::new, vectorOf(d, integer(100)))).get();
             }.points;
         }
 
