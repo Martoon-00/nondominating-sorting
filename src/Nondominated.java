@@ -1,6 +1,4 @@
 import com.sun.istack.internal.Nullable;
-import com.sun.javafx.geom.transform.Identity;
-import sun.rmi.runtime.Log;
 
 import java.io.*;
 import java.util.*;
@@ -11,21 +9,24 @@ import java.util.stream.Collectors;
  * Created by Martoon.
  */
 public class Nondominated {
+    public static int meq = 0;
 
     public static void main(String[] args) throws IOException {
-        //noinspection ArraysAsListWithZeroOrOneArgument
-        Logging.shownLoggers = new TreeSet<>(
-                Arrays.asList(
-//                        "sortSweep",
-//                        "updateSweep"
-                ));
+//        interactAndSolve();
 
-//        interractAndSolve();
+        TestSort.seriesTestSolver(4, 25, 100000);
+//        TestSort.testSolver(19, 3, 3);
 
-        TestSort.seriesTestSolver(2, 3, 1000);
+//        List<Point> points = TestSort.genPoints(234, 4, 100000);
+//        for (int i = 0; i < 20; i++) {
+//            try (Timer timer = new Timer("Sort")) {
+//                new SacSolver(points).solve();
+//            }
+//        }
+
     }
 
-    public static void interractAndSolve() throws IOException {
+    public static void interactAndSolve() throws IOException {
         List<Point> points = readPoints(new File("sorting.in"));
 
         Solver solver = new SacSolver(points);
@@ -91,6 +92,16 @@ public class Nondominated {
         }
 
         @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+
+            Point point = (Point) o;
+
+            return coords.equals(point.coords);
+        }
+
+        @Override
         public String toString() {
             return coords.stream()
                     .map(Object::toString)
@@ -104,7 +115,7 @@ public class Nondominated {
 
     static abstract class Solver {
         protected final List<Point> points;
-        protected final List<Integer> ranks;
+        private final List<Integer> ranks;
 
         public Solver(List<Point> points) {
             this(points, new ArrayList<>(Collections.nCopies(points.size(), 0)));
@@ -118,14 +129,22 @@ public class Nondominated {
                 throw new IllegalArgumentException("Can't solve for no points");
         }
 
-        protected abstract void solveForIds(int dimensions, ArrayList<Integer> ids);
+        public Integer getRank(int i) {
+            return ranks.get(i);
+        }
+
+        public void updateRank(int i, int newRank) {
+            ranks.set(i, Math.max(ranks.get(i), newRank));
+        }
+
+        protected abstract void solveForIds(List<Integer> ids);
 
         public List<Integer> solve() {
             ArrayList<Integer> ids = new ArrayList<>();
             for (int i = 0; i < points.size(); i++) {
                 ids.add(i);
             }
-            solveForIds(points.get(0).getDimensions(), ids);
+            solveForIds(ids);
 
             return new ArrayList<>(ranks);
         }
@@ -142,31 +161,30 @@ public class Nondominated {
         }
 
         @Override
-        protected void solveForIds(int dimensions, ArrayList<Integer> ids) {
-            sortSAC(dimensions, ids);
+        protected void solveForIds(List<Integer> ids) {
+            sortSAC(points.get(0).getDimensions(), ids);
         }
 
         private void sortSAC(int dimension, List<Integer> ids) {
-            Logging logger = new Logging("sortSAC");
-
-            if (dimension <= 1)
+            if (dimension <= 1) {
                 throw new IllegalArgumentException("Can't solve for so few dimensions");
-            else if (dimension == 2) {
+            } else if (ids.size() <= 1) {
+            } else if (dimension == 2) {
                 sortSweep(ids);
             } else {  // TODO: dump sort
                 // Helpers
                 Function<Integer, Integer> getPointCoord = id -> points.get(id).getCoord(dimension - 1);
 
                 // Get median
-                ArrayList<Integer> coords = new ArrayList<>();
+                ArrayList<Integer> zs = new ArrayList<>();
                 for (Integer id : ids) {
-                    coords.add(getPointCoord.apply(id));
+                    zs.add(getPointCoord.apply(id));
                 }
-                Integer median = Util.findMedian(coords);
+                Integer median = Util.findMedian(zs);
 
                 // Split
-                Util.SplitResult<Integer> split = Util.split(ids, id -> coords.get(id).compareTo(median));
-                logger.log("sort: Split to " + split);
+                Function<Integer, Integer> comparingToMedian = id -> getPointCoord.apply(id).compareTo(median);
+                Util.SplitResult<Integer> split = Util.split(ids, comparingToMedian);
 
                 // Call recursively
                 sortSAC(dimension, split.L);
@@ -179,9 +197,11 @@ public class Nondominated {
         }
 
         private void updateSAC(int dimension, List<Integer> known, List<Integer> request) {
-            if (dimension <= 1)
+            if (dimension <= 1) {
                 throw new IllegalArgumentException("Can't solve for so few dimensions");
-            else if (dimension == 2) {
+            } else if (known.isEmpty()) {
+            } else if (request.isEmpty()) {
+            } else if (dimension == 2) {
                 updateSweep(known, request);
             } else {  // TODO: dump sort
                 // Helpers
@@ -194,9 +214,12 @@ public class Nondominated {
                 }
                 Integer median = Util.findMedian(coords);
 
-                Util.SplitResult<Integer> knownSplit = Util.split(known, id -> coords.get(id).compareTo(median));
-                Util.SplitResult<Integer> requestSplit = Util.split(known, id -> coords.get(id).compareTo(median));
+                // Split
+                Function<Integer, Integer> comparingToMedian = id -> getPointCoord.apply(id).compareTo(median);
+                Util.SplitResult<Integer> knownSplit = Util.split(known, comparingToMedian);
+                Util.SplitResult<Integer> requestSplit = Util.split(request, comparingToMedian);
 
+                // Recursive calls
                 updateSAC(dimension, knownSplit.L, requestSplit.L);
                 updateSAC(dimension - 1, knownSplit.L, requestSplit.M);
                 updateSAC(dimension - 1, knownSplit.M, requestSplit.M);
@@ -207,45 +230,38 @@ public class Nondominated {
         }
 
         private void sortSweep(List<Integer> ids) {
-            Logging logger = new Logging("sortSweep");
-
             ids.sort(lexSortComparator);
-            logger.log("Sweeping for " + ids.stream().map(points::get).collect(Collectors.toList()));
 
             // line :: (Y, Rank) -> Id
             TreeMap<Integer, Integer> line = new TreeMap<>();
             // tree :: SegmentTree<K = Y, V = Id, M = max Rank>
             SegmentTree<Integer, Integer, Integer> ranksTree = makeRanksTree(ids);
 
+            Integer prevId = null;
             for (Integer id : ids) {
-                logger.log(() -> "for " + points.get(id));
-                logger.log(() -> "line " + line);
-                logger.log(() -> "ranks tree " + ranksTree);
-                logger.log("");
+                if (prevId != null && points.get(prevId).equals(points.get(id))) {
+                    updateRank(id, getRank(prevId));
+                } else {
+                    Integer key = getY(id);
+                    Map.Entry<Integer, Integer> higherEntry = line.higherEntry(key);
+                    Integer higherPoint = higherEntry == null ? null : higherEntry.getValue();
 
-                Integer key = getY(id);
-                Map.Entry<Integer, Integer> higherEntry = line.higherEntry(key);
-                Integer higherPoint = higherEntry == null ? null : higherEntry.getValue();
+                    int newRank = getNextRankAfter(ranksTree, id);
 
-                int newRank = getNextRankAfter(ranksTree, id);
-                logger.log(() -> "new rank " + newRank);
+                    if (higherPoint != null && newRank == getRank(higherPoint)) {
+                        removePoint(line, ranksTree, null, higherPoint);
+                    }
 
-                if (higherPoint != null && newRank == ranks.get(higherPoint)) {
-                    removePoint(line, ranksTree, null, higherPoint);
+                    updateRank(id, newRank);
+                    insertPoint(line, ranksTree, null, id);
                 }
-
-                ranks.set(id, newRank);
-                insertPoint(line, ranksTree, null, id);
+                prevId = id;
             }
         }
 
         private void updateSweep(List<Integer> knowns, List<Integer> requests) {
-            Logging logger = new Logging("updateSweep");
-
             knowns.sort(lexSortComparator);
             requests.sort(lexSortComparator);
-            logger.log("Sweeping for " + knowns.stream().map(points::get).collect(Collectors.toList())
-                    + "\n  " + requests.stream().map(points::get).collect(Collectors.toList()));
 
             // line :: (Y, Rank) -> Id
             TreeMap<Integer, Integer> line = new TreeMap<>();
@@ -256,16 +272,16 @@ public class Nondominated {
 
             int iKnown = 0;
             for (Integer req : requests) {
-                while (iKnown < knowns.size() && lexSortComparator.compare(knowns.get(iKnown), req) < 0) {
+                while (iKnown < knowns.size() && lexSortComparator.compare(knowns.get(iKnown), req) <= 0) {
                     Integer known = knowns.get(iKnown);
                     iKnown++;
 
                     // processing known point
-                    int rank = ranks.get(known);
+                    int rank = getRank(known);
                     Integer oldKnown = front[rank];
                     if (oldKnown == null) {
                         insertPoint(line, ranksTree, front, known);
-                    } else if (getY(oldKnown) < getY(known)) {
+                    } else if (getY(oldKnown) > getY(known)) {
                         removePoint(line, ranksTree, front, oldKnown);
                         insertPoint(line, ranksTree, front, known);
                     } else {
@@ -274,12 +290,12 @@ public class Nondominated {
 
                 // processing request point
                 int newRank = getNextRankAfter(ranksTree, req);
-                ranks.set(req, newRank);
+                updateRank(req, newRank);
             }
         }
 
         private SegmentTree<Integer, Integer, Integer> makeRanksTree(List<Integer> ids) {
-            return SegmentTree.make(this::getY, ranks::get, Math::max, ids);
+            return SegmentTree.make(this::getY, this::getRank, Math::max, ids);
         }
 
         private int getNextRankAfter(SegmentTree<Integer, Integer, Integer> ranksTree, Integer id) {
@@ -295,7 +311,7 @@ public class Nondominated {
                 ranksTree.put(id);
             }
             if (front != null) {
-                front[ranks.get(id)] = id;
+                front[getRank(id)] = id;
             }
         }
 
@@ -307,7 +323,7 @@ public class Nondominated {
                 ranksTree.remove(id);
             }
             if (front != null) {
-                front[ranks.get(id)] = null;
+                front[getRank(id)] = null;
             }
         }
 
@@ -337,7 +353,7 @@ public class Nondominated {
         }
 
         @Override
-        protected void solveForIds(int dimensions, ArrayList<Integer> ids) {
+        protected void solveForIds(List<Integer> ids) {
             sortDumb(ids);
         }
 
@@ -365,7 +381,7 @@ public class Nondominated {
             for (int i = 0; i < request.size(); i++) {
                 Integer id = request.get(i);
                 Util.Cached<Integer> rankEval = rankEvals.get(i);
-                ranks.set(id, rankEval.get());
+                updateRank(id, rankEval.get());
             }
         }
     }
@@ -381,6 +397,9 @@ public class Nondominated {
 
         public static <K extends Comparable<K>, V, M> SegmentTree<K, V, M>
         make(Function<V, K> getKey, Function<V, M> getSummary, BinaryOperator<M> addSummaries, List<V> values) {
+            if (values.isEmpty())
+                throw new IllegalArgumentException("Can't build empty segment tree");
+
             List<K> keys = new ArrayList<>();
             for (V value : values) {
                 keys.add(getKey.apply(value));
@@ -626,10 +645,12 @@ public class Nondominated {
 
         public static <V> List<V> removeAdjacentDuplicates(List<V> list) {
             ArrayList<V> unique = new ArrayList<>();
-            unique.add(list.get(0));
-            for (int i = 1; i < list.size(); i++) {
-                if (list.get(i - 1) != list.get(i)) {
-                    unique.add(list.get(i));
+            if (list.size() > 0) {
+                unique.add(list.get(0));
+                for (int i = 1; i < list.size(); i++) {
+                    if (list.get(i - 1) != list.get(i)) {
+                        unique.add(list.get(i));
+                    }
                 }
             }
             return unique;
@@ -727,28 +748,6 @@ public class Nondominated {
         protected static <A, B> Supplier<B> map(Function<A, B> mapper, Supplier<A> sup) {
             return () -> mapper.apply(sup.get());
         }
-    }
-
-    @SuppressWarnings("unused")
-    static class Logging {
-        private static Set<String> shownLoggers = new TreeSet<>();
-
-        private final String name;
-
-        public Logging(String name) {
-            this.name = name;
-        }
-
-        public void log(Supplier<String> msg) {
-            if (shownLoggers.contains(name)) {
-                System.out.println(name + ": " + msg.get());
-            }
-        }
-
-        public void log (String msg) {
-            log(() -> msg);
-        }
-
     }
 
     @SuppressWarnings("unused")
@@ -861,6 +860,7 @@ public class Nondominated {
 
         public static void seriesTestSolver(int d, int n, int times) {
             for (int i = 0; i < times; i++) {
+                System.out.println("Iteration #" + i);
                 testSolver(i, d, n);
             }
         }
