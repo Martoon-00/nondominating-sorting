@@ -12,9 +12,9 @@ public class Nondominated {
     public static int meq = 0;
 
     public static void main(String[] args) throws IOException {
-//        interactAndSolve();
+        interactAndSolve(new File("inputs/problem3.in"), new File("sorting.out"));
 
-        TestSort.seriesTestSolver(4, 25, 100000);
+//        TestSort.seriesTestSolver(4, 25, 100000);
 //        TestSort.testSolver(19, 3, 3);
 
 //        List<Point> points = TestSort.genPoints(234, 4, 100000);
@@ -26,15 +26,16 @@ public class Nondominated {
 
     }
 
-    public static void interactAndSolve() throws IOException {
-        List<Point> points = readPoints(new File("sorting.in"));
+    public static void interactAndSolve(File input, File output) throws IOException {
+        List<Point> points = readPoints(input);
 
         Solver solver = new SacSolver(points);
         List<Integer> ranks = solver.solve();
 
-        for (Integer rank : ranks) {
-            PrintStream out = new PrintStream("sorting.out");
-            out.print(rank + " ");
+        try (PrintStream out = new PrintStream(output)) {
+            for (Integer rank : ranks) {
+                out.print(rank + " ");
+            }
         }
     }
 
