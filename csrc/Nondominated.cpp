@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <stdlib.h>
 #include <algorithm>
 #include <set>
@@ -621,6 +622,7 @@ struct sac_solver: solver {
             // Recursive calls
             updateSAC(dimension, knownCut.L, requestCut.L);
             updateSAC(dimension - 1, knownCut.L, requestCut.M);
+            updateSAC(dimension - 1, knownCut.M, requestCut.M);
             updateSAC(dimension - 1, knownCut.L, requestCut.R);
             updateSAC(dimension - 1, knownCut.M, requestCut.R);
             updateSAC(dimension, knownCut.R, requestCut.R);
@@ -784,7 +786,7 @@ bool test_correctness() {
     for (int i = 0; i <= 10000; i++) {
         cout << "Iteration #" << i << endl;
         gen::refresh_seed(i);
-        auto points = gen::points_g(100, 4);
+        auto points = gen::points_g(300, 4);
         auto ranks_sac = sac_solver(points).solve();
         auto ranks_dumb = dumb_solver(points).solve();
         if (ranks_sac != ranks_dumb) {
@@ -815,9 +817,33 @@ void measure() {
     cout << timer << endl;
 }
 
+void interact(){
+    ifstream fin("sorting.in");
+    ofstream fout("sorting.out");
+    int n, d;
+    fin >> n >> d;
+    vector<point> points;
+    for (int i = 0; i < n; i++) {
+        vector<coord_t> coords;
+        for (int j = 0; j < d; j++) {
+            coord_t x;
+            fin >> x;
+            coords.push_back(x);
+        }
+        points.push_back(point(coords));
+    }
+
+    auto ranks = sac_solver(points).solve();
+    for (int rank : ranks) {
+        fout << rank << " ";
+    }
+    fout << endl;
+}
+
 int main(){
-    measure();
     // test_correctness();
+    // measure();
+    interact();
 
     return 0;
 }
