@@ -628,10 +628,12 @@ struct sac_solver: solver {
         }
     }
 
+    // reusable front, clear after use.
+    vector<point_id> front = vector<point_id>(points.size());
+
     void updateSweep(vector<point_id>& knowns, vector<point_id>& requests) {
         auto line = map<coord_t, point_id>();
         auto ranks_tree = makeRanksTree(knowns);
-        auto front = vector<point_id>(points.size()); // TODO: Optimize!
 
         size_t known_i = 0;
         for (point_id req : requests) {
@@ -654,6 +656,10 @@ struct sac_solver: solver {
             // processing request point
             int new_rank = get_next_rank_after(ranks_tree, req);
             update_rank(req, new_rank);
+        }
+
+        for (auto kn: knowns) {
+            front[get_rank(kn)] = point_id();
         }
     }
 
@@ -735,8 +741,7 @@ struct gen {
 };
 size_t gen::seed;
 
-
-int main(){
+bool test_correctness() {
     for (int i = 1; i <= 10000; i++) {
         cout << "Iteration #" << i << endl;
         gen::refresh_seed(i);
@@ -746,10 +751,26 @@ int main(){
         if (ranks_sac != ranks_dumb) {
             cout << "For " << points << endl;
             cout << "expected " << ranks_dumb << ", got" << ranks_sac << endl;
-            return 1;
+            return false;
         }
         cout << "OK!" << endl;
     }
+    return true;
+}
+
+
+int main(){
+    timer timer;
+
+    gen::refresh_seed(3234);
+    auto points = gen::points_g(10000, 4);
+    sac_solver(points).solve();
+
+    cout << timer << endl;
+
+
+    // test_correctness();
+
     return 0;
 }
 
