@@ -8,6 +8,12 @@
 
 using namespace std;
 
+int sortSACNum;
+int updateSACNum;
+int updateSweepNum = 0;
+int sortSweepNum = 0;
+int splitNum = 0;
+
 //
 // Range
 //
@@ -98,6 +104,7 @@ struct split_t {
 
 template <class V, class C>
 split_t<V> split(vector<V> list, C med, function<C(V)> convert) {
+    splitNum++;
     split_t<V> result = split_t<V>();
     for (V value : list) {
         auto coord = convert(value);
@@ -313,7 +320,8 @@ struct seg_tree {
         {}
 
         M request(range_t<K> reqRange) override {
-            if (reqRange == this -> range) {  // totally matches
+            if (reqRange.left <= this -> range.left
+                && this -> range.right <= reqRange.right) {  // request contains us
                 return this -> summary;
             } else if (reqRange.left > this->range.right
                        || this->range.left > reqRange.right) {  // totally in nowhere
@@ -490,7 +498,7 @@ struct dumb_solver: solver {
                         max_rank = max(max_rank, (*rank_evals[int(dep)])());
                     }
                 }
-                return max_rank + 1;
+                return max(max_rank + 1, get_rank(id));
             }));
         }
         for (auto id : ids) {
@@ -543,6 +551,7 @@ struct sac_solver: solver {
 
 
     void sortSAC(int dimension, vector<point_id>& ids) {
+        sortSACNum++;
         // cerr << "sortSAC " << dimension << " " << ids << endl;
 
         if (dimension <= 1) {
@@ -550,7 +559,7 @@ struct sac_solver: solver {
         } else if (ids.size() == 0){
         } else if (ids.size() == 1) {
             update_rank(ids[0], 1);
-        } else if (ids.size() < 500) {
+        } else if (ids.size() < 5) {
             dumb_solver(points, ranks).solve_for_ids(ids);
         } else if (dimension == 2) {
             sortSweep(ids);
@@ -572,22 +581,23 @@ struct sac_solver: solver {
 
             // Call recursively
             sortSAC(dimension, cut.L);
-            updateSAC(dimension, cut.L, cut.M);
+            updateSAC(dimension - 1, cut.L, cut.M);
             sortSAC(dimension - 1, cut.M);
-            updateSAC(dimension, cut.L, cut.R);
-            updateSAC(dimension, cut.M, cut.R);
+            updateSAC(dimension - 1, cut.L, cut.R);
+            updateSAC(dimension - 1, cut.M, cut.R);
             sortSAC(dimension, cut.R);
         }
 
     }
 
     void updateSAC(int dimension, vector<point_id>& known, vector<point_id>& request) {
+        updateSACNum++;
         // cerr << "updateSAC " << dimension << " " << known << " " << request << endl;
 
         if (dimension <= 1) {
             throw runtime_error("Can't update for so few dimensions");
         } else if (request.size() == 0 || known.size() == 0) {
-        } else if (known.size() + request.size() <= 500) {
+        } else if (known.size() * request.size() <= 20000) {
             dumb_solver(points, ranks).update_dumb(known, request);
         } else if (dimension == 2) {
             updateSweep(known, request);
@@ -667,6 +677,7 @@ struct sac_solver: solver {
 
    
     void sortSweep(vector<point_id>& ids) {
+        sortSweepNum++;
         auto line = line_t();
         auto ranks_tree = makeRanksTree(ids);
 
@@ -695,12 +706,14 @@ struct sac_solver: solver {
     vector<point_id> front = vector<point_id>(points.size());
 
     void updateSweep(vector<point_id>& knowns, vector<point_id>& requests) {
+        updateSweepNum++;
         // cerr << "updateSweep " << knowns << " " << requests << endl;
 
         auto line = map<coord_t, point_id>();
         auto ranks_tree = makeRanksTree(knowns);
 
         size_t known_i = 0;
+        // 2.0 sec
         for (point_id req : requests) {
             while (known_i < knowns.size() && !lex_sort_cmp(req, knowns[known_i])) {
                 auto known = knowns[known_i];
@@ -711,7 +724,9 @@ struct sac_solver: solver {
                 point_id old_known = front[rank];
                 if (old_known == point_id()) {
                     insert_point(&line, ranks_tree, &front, known);
+                    // 0.6 sec
                 } else if (getY(old_known) > getY(known)) {
+                    // 0.4 sec
                     remove_point(&line, ranks_tree, &front, old_known);
                     insert_point(&line, ranks_tree, &front, known);
                 } else {
@@ -719,6 +734,7 @@ struct sac_solver: solver {
             }
 
             // processing request point
+            // 0.2 sec
             int new_rank = get_next_rank_after(ranks_tree, req);
             update_rank(req, new_rank);
         }
@@ -765,7 +781,7 @@ struct gen {
 size_t gen::seed;
 
 bool test_correctness() {
-    for (int i = 1; i <= 10000; i++) {
+    for (int i = 0; i <= 10000; i++) {
         cout << "Iteration #" << i << endl;
         gen::refresh_seed(i);
         auto points = gen::points_g(100, 4);
@@ -781,17 +797,26 @@ bool test_correctness() {
     return true;
 }
 
+void printStats() {
+    cerr << "sortSAC " << sortSACNum << endl;
+    cerr << "updateSAC " << updateSACNum << endl;
+    cerr << "sortSweepNum " << sortSweepNum << endl;
+    cerr << "updateSweepNum " << updateSweepNum << endl;
+    cerr << "splitNum " << splitNum << endl;
+}
 
-int main(){
+void measure() {
     timer timer;
 
-    gen::refresh_seed(3234);
+    gen::refresh_seed(32234);
     auto points = gen::points_g(100000, 4);
     sac_solver(points).solve();
 
     cout << timer << endl;
+}
 
-
+int main(){
+    measure();
     // test_correctness();
 
     return 0;
