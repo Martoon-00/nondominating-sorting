@@ -68,17 +68,22 @@ ostream& operator<<(ostream& os, vector<V> vs) {
 
 template <class T>
 T findMedian(vector<T>& list) {
-    if (list.size() < 25) {
-        sort(list.begin(), list.end());
-        return list[list.size() / 2];
-    }
+    // if (list.size() < 25) {
+    //     sort(list.begin(), list.end());
+    //     return list[list.size() / 2];
+    // }
 
-    auto result = vector<T>();
-    for (size_t i = 0; i + 5 < list.size(); i += 5) {
-        sort(list.begin() + i, list.begin() + i + 5);
-        result.push_back(list[i + 2]);
-    }
-    return findMedian(result);
+    // auto result = vector<T>();
+    // for (size_t i = 0; i + 5 < list.size(); i += 5) {
+    //     sort(list.begin() + i, list.begin() + i + 5);
+    //     result.push_back(list[i + 2]);
+    // }
+    // return findMedian(result);
+
+    size_t n = list.size() / 2;
+    nth_element(list.begin(), list.begin() + n, list.end());
+    return list[n];
+
 }
 
 template <class V>
@@ -109,6 +114,8 @@ template <class V, class C>
 split_t<V> split(vector<V> list, C med, function<C(V)> convert) {
     splitNum++;
     split_t<V> result = split_t<V>();
+    result.L.reserve(list.size() / 2);
+    result.R.reserve(list.size() / 2);
     for (V value : list) {
         auto coord = convert(value);
         if (coord < med) {
@@ -615,6 +622,9 @@ struct sac_solver: solver {
             for (point_id id : request) {
                 zs.push_back(getPointCoord(id));
             }
+            for (point_id id : known) {
+                zs.push_back(getPointCoord(id));
+            }
             coord_t median = findMedian(zs);
 
             // Split
@@ -717,6 +727,7 @@ struct sac_solver: solver {
 
         size_t known_i = 0;
         for (point_id req : requests) {
+            // 0.9 sec
             while (known_i < knowns.size() && !lex_sort_cmp(req, knowns[known_i])) {
                 auto known = knowns[known_i];
                 known_i++;
@@ -734,6 +745,7 @@ struct sac_solver: solver {
             }
 
             // processing request point
+            // 0.4 sec
             int new_rank = get_next_rank_after(ranks_tree, req);
             update_rank(req, new_rank);
         }
@@ -762,10 +774,11 @@ struct gen {
         return (int) (n % (2 * k + 1)) - k;
     }
 
+    static coord_t shift;
     static point point_g(int d) {
         auto v = vector<coord_t>();
         for (int i = 0; i < d; i++) {
-            v.push_back(int_g(100));
+            v.push_back(int_g(100) + shift);
         }
         return point(v);
     }
@@ -778,6 +791,7 @@ struct gen {
     }
 };
 size_t gen::seed;
+coord_t gen::shift = 0;
 
 bool test_correctness() {
     for (int i = 0; i <= 10000; i++) {
