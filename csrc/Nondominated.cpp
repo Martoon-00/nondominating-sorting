@@ -412,12 +412,11 @@ ostream& operator<<(ostream &os, seg_tree<K, V, M>& tree) {
 
 struct solver {
     // id -> point
-    vector<point> points;
+    vector<point>& points;
     // id -> rank
-    vector<rang> ranks;
+    vector<rang>& ranks;
 
-    solver(vector<point>& ps): points(ps) {
-        ranks.resize(points.size());
+    solver(vector<point>& ps): points(ps), ranks(*(new vector<rang>(points.size()))) {
     }
 
     solver(vector<point>& ps, vector<rang>& rs): points(ps), ranks(rs) {
@@ -446,10 +445,74 @@ struct solver {
             ids.push_back(point_id(i));
         }
         solve_for_ids(ids);
+
+        for (auto id: ids) {
+            if (get_rank(id) == 0)
+                throw runtime_error("Rank remained unknown");
+            ranks[int(id)]--;
+        }
         return ranks;
     }
 
 };
+
+struct dumb_solver: solver {
+    dumb_solver(vector<point>& points): solver(points) {
+        ranks.resize(points.size());
+    }
+
+    dumb_solver(vector<point>& points, vector<rang>& ranks): solver(points, ranks) { }
+
+    void solve_for_ids(vector<point_id> &ids) override {
+        sort_dumb(ids);
+    }
+
+    // reusable vector with rank evaluators.
+    static vector<unique_ptr<cached<rang>>> rank_evals;
+
+    void sort_dumb(vector<point_id>& ids) {
+        if (ids.size() == 0)
+            return;
+        if (ids.size() == 1) {
+            update_rank(ids[0], 1);
+            return;
+        }
+
+        if (rank_evals.size() != points.size()) 
+            rank_evals.resize(points.size());
+
+        for (auto id : ids) {
+            rank_evals[int(id)] = unique_ptr<cached<rang>>(
+              new cached<rang>([id, this, &ids](){
+                rang max_rank = 0;
+                for (auto dep : ids) {
+                    if (getPoint(dep).dominates(getPoint(id))) {
+                        max_rank = max(max_rank, (*rank_evals[int(dep)])());
+                    }
+                }
+                return max_rank + 1;
+            }));
+        }
+        for (auto id : ids) {
+            update_rank(id, (*rank_evals[int(id)])());
+        }
+
+    }
+
+    void update_dumb(vector<point_id>& known, vector<point_id>& request) {
+        if (!known.size())
+            return;
+
+        for (auto req : request) {
+            for (auto kn : known) {
+                if (getPoint(kn).dominates(getPoint(req))){
+                    update_rank(req, get_rank(kn) + 1);
+                }
+            }
+        }
+    }
+};
+vector<unique_ptr<cached<rang>>> dumb_solver::rank_evals = vector<unique_ptr<cached<rang>>>();
 
 struct sac_solver: solver {
 
@@ -459,11 +522,6 @@ struct sac_solver: solver {
         sort(ids.begin(), ids.end(), 
              [&](const point_id& id1, const point_id& id2){ return lex_sort_cmp(id1, id2); });
         sortSAC(points[0].dimensions(), ids);
-        for (auto id: ids) {
-            if (get_rank(id) == 0)
-                throw runtime_error("Rank remained unknown");
-            ranks[int(id)]--;
-        }
     }
 
     coord_t getX(point_id id) {
@@ -485,14 +543,18 @@ struct sac_solver: solver {
 
 
     void sortSAC(int dimension, vector<point_id>& ids) {
+        // cerr << "sortSAC " << dimension << " " << ids << endl;
+
         if (dimension <= 1) {
             throw runtime_error("Can't sort for so few dimensions");
-        } else if (ids.size() == 0) {
+        } else if (ids.size() == 0){
         } else if (ids.size() == 1) {
             update_rank(ids[0], 1);
+        } else if (ids.size() < 500) {
+            dumb_solver(points, ranks).solve_for_ids(ids);
         } else if (dimension == 2) {
             sortSweep(ids);
-        } else {  // TODO: dump sort
+        } else {
             // Helpers
             function<coord_t(point_id)> getPointCoord = [&](point_id id) {
                 return getPoint(id)[dimension - 1];
@@ -520,14 +582,16 @@ struct sac_solver: solver {
     }
 
     void updateSAC(int dimension, vector<point_id>& known, vector<point_id>& request) {
-        // cerr << "updateSAC " << known << " " << request << endl;
+        // cerr << "updateSAC " << dimension << " " << known << " " << request << endl;
 
         if (dimension <= 1) {
             throw runtime_error("Can't update for so few dimensions");
-        } else if (!known.size() || !request.size()) {
+        } else if (request.size() == 0 || known.size() == 0) {
+        } else if (known.size() + request.size() <= 500) {
+            dumb_solver(points, ranks).update_dumb(known, request);
         } else if (dimension == 2) {
             updateSweep(known, request);
-        } else {  // TODO: dump sort
+        } else {
             // Helpers
             function<coord_t(point_id)> getPointCoord = [&](point_id id) {
                 return getPoint(id)[dimension - 1];
@@ -547,7 +611,6 @@ struct sac_solver: solver {
             // Recursive calls
             updateSAC(dimension, knownCut.L, requestCut.L);
             updateSAC(dimension - 1, knownCut.L, requestCut.M);
-            updateSAC(dimension - 1, knownCut.M, requestCut.M);
             updateSAC(dimension - 1, knownCut.L, requestCut.R);
             updateSAC(dimension - 1, knownCut.M, requestCut.R);
             updateSAC(dimension, knownCut.R, requestCut.R);
@@ -632,6 +695,8 @@ struct sac_solver: solver {
     vector<point_id> front = vector<point_id>(points.size());
 
     void updateSweep(vector<point_id>& knowns, vector<point_id>& requests) {
+        // cerr << "updateSweep " << knowns << " " << requests << endl;
+
         auto line = map<coord_t, point_id>();
         auto ranks_tree = makeRanksTree(knowns);
 
@@ -663,48 +728,6 @@ struct sac_solver: solver {
         }
     }
 
-};
-
-
-struct dumb_solver: solver {
-    dumb_solver(vector<point>& points): solver(points) {
-        ranks.resize(points.size());
-    }
-
-    dumb_solver(vector<point>& points, vector<rang>& ranks): solver(points, ranks) { }
-
-    void solve_for_ids(vector<point_id> &ids) override {
-        sort_dumb(ids);
-    }
-
-    void sort_dumb(vector<point_id>& ids) {
-        auto rank_evals = vector<unique_ptr<cached<rang>>>(ids.size());
-        for (auto id : ids) {
-            rank_evals[int(id)] = unique_ptr<cached<rang>>(
-              new cached<rang>([id, this, &ids, &rank_evals](){
-                rang max_rank = 0;
-                for (auto dep : ids) {
-                    if (getPoint(dep).dominates(getPoint(id))) {
-                        max_rank = max(max_rank, (*rank_evals[int(dep)])() + 1);
-                    }
-                }
-                return max_rank;
-            }));
-        }
-        for (auto id : ids) {
-            update_rank(id, (*rank_evals[int(id)])());
-        }
-    }
-
-    void updateDumb(vector<point_id>& known, vector<point_id>& request) {
-        for (auto req : request) {
-            for (auto kn : known) {
-                if (getPoint(kn).dominates(getPoint(req))){
-                    update_rank(req, get_rank(kn) + 1);
-                }
-            }
-        }
-    }
 };
 
 //
@@ -763,7 +786,7 @@ int main(){
     timer timer;
 
     gen::refresh_seed(3234);
-    auto points = gen::points_g(10000, 4);
+    auto points = gen::points_g(100000, 4);
     sac_solver(points).solve();
 
     cout << timer << endl;
