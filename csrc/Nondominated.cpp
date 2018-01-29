@@ -713,11 +713,9 @@ struct sac_solver: solver {
         updateSweepNum++;
         // cerr << "updateSweep " << knowns << " " << requests << endl;
 
-        auto line = map<coord_t, point_id>();
         auto ranks_tree = makeRanksTree(knowns);
 
         size_t known_i = 0;
-        // 2.0 sec
         for (point_id req : requests) {
             while (known_i < knowns.size() && !lex_sort_cmp(req, knowns[known_i])) {
                 auto known = knowns[known_i];
@@ -727,18 +725,15 @@ struct sac_solver: solver {
                 rang rank = get_rank(known);
                 point_id old_known = front[rank];
                 if (old_known == point_id()) {
-                    insert_point(&line, ranks_tree, &front, known);
-                    // 0.6 sec
+                    insert_point(nullptr, ranks_tree, &front, known);
                 } else if (getY(old_known) > getY(known)) {
-                    // 0.4 sec
-                    remove_point(&line, ranks_tree, &front, old_known);
-                    insert_point(&line, ranks_tree, &front, known);
+                    remove_point(nullptr, ranks_tree, &front, old_known);
+                    insert_point(nullptr, ranks_tree, &front, known);
                 } else {
                 }
             }
 
             // processing request point
-            // 0.2 sec
             int new_rank = get_next_rank_after(ranks_tree, req);
             update_rank(req, new_rank);
         }
