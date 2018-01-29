@@ -45,12 +45,12 @@ template <class T>
 T findMedian(vector<T>& list) {
     if (list.size() < 25) {
         sort(list.begin(), list.end());
-        return list.get(list.size() / 2);
+        return list[list.size() / 2];
     }
 
     auto result = vector<T>();
-    for (int i = 0; i + 5 < list.size(); i += 5) {
-        list.sort(list.begin() + i, list.begin() + i + 5);
+    for (size_t i = 0; i + 5 < list.size(); i += 5) {
+        sort(list.begin() + i, list.begin() + i + 5);
         result.push_back(list[i + 2]);
     }
     return findMedian(result);
@@ -80,13 +80,14 @@ struct split_t {
     split_t() {};
 };
 
-template <class V>
-split_t<V> split(vector<V> list, V med, bool less(V, V)) {
+template <class V, class C>
+split_t<V> split(vector<V> list, C med, function<C(V)> convert) {
     split_t<V> result = split_t<V>();
     for (V value : list) {
-        if (less(value, med)) {
+        auto coord = convert(value);
+        if (coord < med) {
             result.L.push_back(value);
-        } else if (less(med, value)) {
+        } else if (coord > med) {
             result.R.push_back(value);
         } else {
             result.M.push_back(value);
@@ -146,6 +147,78 @@ ostream& operator<<(ostream &os, timer t) {
     os << t.sec() << "s";
     return os;
 }
+
+//
+// point
+//
+
+typedef int coord_t;
+
+struct point {
+    static int COORD_X;
+    static int COORD_Y;
+
+    vector<coord_t> coords;
+
+    point(vector<coord_t>&& cs): coords(move(cs)) {}
+
+    coord_t operator[](int i) {
+        return coords[i];
+    }
+
+    size_t dimensions() {
+        return coords.size();
+    }
+
+    bool dominates(point& o) {
+        bool meet_strict = false;
+        for (size_t i = 0; i < coords.size(); i++) {
+            if (coords[i] > o.coords[i])
+                return false;
+            if (coords[i] < o.coords[i])
+                meet_strict = true;
+        }
+        return meet_strict;
+    }
+
+    bool operator==(point& o) {
+        return coords == o.coords;
+    }
+};
+
+int point::COORD_X = 0;
+int point::COORD_Y = 1;
+ostream& operator<<(ostream &os, point p) {
+    os << "(";
+    for (size_t i = 0; i < p.dimensions(); i++)
+        os << p[i] << ", ";
+    os << ")";
+    return os;
+}
+
+struct point_id {
+    int i;
+    explicit point_id(int i_): i(i_) {};
+    point_id(const point_id& p): i(p.i) {};
+    point_id(): i(-1) {};
+    point_id& operator=(const point_id& o) {
+        i = o.i;
+        return *this;
+    }
+    operator int() {
+        return i;
+    }
+    bool operator<(const point_id&) const {
+        throw runtime_error("Don't call this comparision!");
+    }
+};
+ostream& operator<<(ostream &os, point_id id) {
+    return os << "#" << id.i;
+}
+
+// In algorithm we numerate ranks stating from 1, 0 indicates unknown value.
+// It's convenient in initialization.
+typedef size_t rang;
 
 //
 // Segment tree
@@ -300,7 +373,7 @@ struct seg_tree {
     }
 
     void remove(V value) {
-        str -> modify(get_key(value), [&value](set<V>& s){ s.remove(value); });
+        str -> modify(get_key(value), [&value](set<V>& s){ s.erase(value); });
     }
 
 };
@@ -313,15 +386,304 @@ ostream& operator<<(ostream &os, seg_tree<K, V, M>& tree) {
 }
 
 
+//
+// Solution
+//
+
+struct solver {
+    // id -> point
+    vector<point> points;
+    // id -> rank
+    vector<rang> ranks;
+
+    solver(vector<point>& ps): points(ps) {
+        ranks.resize(points.size());
+    }
+
+    solver(vector<point>& ps, vector<rang>& rs): points(ps), ranks(rs) {
+        if (!points.size())
+            throw runtime_error("Can't solve for no points");
+    }
+
+    rang get_rank(point_id i) {
+        return ranks[int(i)];
+    }
+
+    void update_rank(point_id i, rang new_rank) {
+        if (ranks[int(i)] < new_rank)
+            ranks[int(i)] = new_rank;
+    }
+
+    point& getPoint(point_id i) {
+        return points[int(i)];
+    }
+
+    virtual void solve_for_ids(vector<point_id>& ids) = 0;
+
+    vector<rang> solve() {
+        vector<point_id> ids = vector<point_id>();
+        for (size_t i = 0; i < points.size(); i++) {
+            ids.push_back(point_id(i));
+        }
+        solve_for_ids(ids);
+        return ranks;
+    }
+
+};
+
+struct sac_solver: solver {
+
+    sac_solver(vector<point>& points): solver(points) {}
+
+    void solve_for_ids(vector<point_id>& ids) override {
+        sortSAC(points[0].dimensions(), ids);
+        for (auto id: ids) {
+            ranks[int(id)]--;
+        }
+    }
+
+    coord_t getX(point_id id) {
+        return getPoint(id)[point::COORD_X];
+    }
+    coord_t getY(point_id id) {
+        return getPoint(id)[point::COORD_Y];
+    }
+
+    bool lex_sort_cmp(const point_id& id1, const point_id& id2) {
+        point p1 = getPoint(id1);
+        point p2 = getPoint(id2);
+        coord_t x1 = p1[point::COORD_X];
+        coord_t y1 = p1[point::COORD_Y];
+        coord_t x2 = p2[point::COORD_X];
+        coord_t y2 = p2[point::COORD_Y];
+        return x1 < x2 || (x1 == x2 && y1 < y2);
+    };
 
 
+    void sortSAC(int dimension, vector<point_id>& ids) {
+        if (dimension <= 1) {
+            throw runtime_error("Can't sort for so few dimensions");
+        } else if (ids.size() <= 1) {
+        } else if (dimension == 2) {
+            sortSweep(ids);
+        } else {  // TODO: dump sort
+            // Helpers
+            function<coord_t(point_id)> getPointCoord = [&](point_id id) {
+                return getPoint(id)[dimension - 1];
+            };
+
+            // Get median
+            auto zs = vector<coord_t>();
+            for (point_id id : ids) {
+                zs.push_back(getPointCoord(id));
+            }
+            coord_t median = findMedian(zs);
+
+            // Split
+            split_t<point_id> cut = split(ids, median, getPointCoord);
+
+            // Call recursively
+            sortSAC(dimension, cut.L);
+            updateSAC(dimension, cut.L, cut.M);
+            sortSAC(dimension - 1, cut.M);
+            updateSAC(dimension, cut.L, cut.R);
+            updateSAC(dimension, cut.M, cut.R);
+            sortSAC(dimension, cut.R);
+        }
+
+    }
+
+     void updateSAC(int dimension, vector<point_id>& known, vector<point_id>& request) {
+        if (dimension <= 1) {
+            throw runtime_error("Can't update for so few dimensions");
+        } else if (!known.size() || !request.size()) {
+        } else if (dimension == 2) {
+            updateSweep(known, request);
+        } else {  // TODO: dump sort
+            // Helpers
+            function<coord_t(point_id)> getPointCoord = [&](point_id id) {
+                return getPoint(id)[dimension - 1];
+            };
+
+            // Get median
+            auto zs = vector<coord_t>();
+            for (point_id id : request) {
+                zs.push_back(getPointCoord(id));
+            }
+            coord_t median = findMedian(zs);
+
+            // Split
+            split_t<point_id> knownCut = split(known, median, getPointCoord);
+            split_t<point_id> requestCut = split(request, median, getPointCoord);
+
+            // Recursive calls
+            updateSAC(dimension, knownCut.L, requestCut.L);
+            updateSAC(dimension - 1, knownCut.L, requestCut.M);
+            updateSAC(dimension - 1, knownCut.M, requestCut.M);
+            updateSAC(dimension - 1, knownCut.L, requestCut.R);
+            updateSAC(dimension - 1, knownCut.M, requestCut.R);
+            updateSAC(dimension, knownCut.R, requestCut.R);
+        }
+
+    }
+
+    typedef map<coord_t, point_id> line_t;
+    typedef seg_tree<coord_t, point_id, rang> ranks_tree_t;
+
+    ranks_tree_t* makeRanksTree(vector<point_id>& ids) {
+        return ranks_tree_t::make(
+            [&](point_id id){ return getY(id); },
+            [&](point_id id){ return get_rank(id); },
+            [&](rang a, rang b){ return max(a, b); },
+            ids);
+    }
+
+    int get_next_rank_after(ranks_tree_t* ranks_tree, point_id id) {
+        rang maxRank = ranks_tree -> request(range_t<coord_t>(numeric_limits<int>::min(), getY(id)));
+        return maxRank + 1;
+    }
+
+    void insert_point(line_t* line, ranks_tree_t* ranks_tree, vector<point_id>* front, point_id id) {
+        if (line != nullptr) {
+            line -> insert(pair<coord_t, point_id>(getY(id), id));
+        }
+        if (ranks_tree != nullptr) {
+            ranks_tree -> insert(id);
+        }
+        if (front != nullptr) {
+            (*front)[get_rank(id)] = id;
+        }
+    }
+
+    void remove_point(line_t* line, ranks_tree_t* ranks_tree, vector<point_id>* front, point_id id) {
+        if (line != nullptr) {
+            line -> erase(getY(id));
+        }
+        if (ranks_tree != nullptr) {
+            ranks_tree -> remove(id);
+        }
+        if (front != nullptr) {
+            (*front)[get_rank(id)] = point_id();
+        }
+    }
+
+   
+    void sortSweep(vector<point_id>& ids) {
+        sort(ids.begin(), ids.end(),
+             [&](const point_id& id1, const point_id& id2){ return lex_sort_cmp(id1, id2); });
+
+        auto line = line_t();
+        auto ranks_tree = makeRanksTree(ids);
+
+        point_id prevId = point_id();
+        for (point_id id : ids) {
+            if (prevId != point_id() && getPoint(prevId) == getPoint(id)) {
+                update_rank(id, get_rank(prevId));
+            } else {
+                coord_t key = getY(id);
+                auto higher_point = line.upper_bound(key);
+
+                rang new_rank = get_next_rank_after(ranks_tree, id);
+
+                if (higher_point != line.end() && new_rank == get_rank(higher_point -> second)) {
+                    remove_point(&line, ranks_tree, nullptr, higher_point -> second);
+                }
+
+                update_rank(id, new_rank);
+                insert_point(&line, ranks_tree, nullptr, id);
+            }
+            prevId = id;
+        }
+    }
+
+    void updateSweep(vector<point_id>& knowns, vector<point_id>& requests) {
+        auto lex_sort_cmp_ = [&](const point_id& id1, const point_id& id2){ return lex_sort_cmp(id1, id2); };
+        sort(knowns.begin(), knowns.end(), lex_sort_cmp_);
+        sort(requests.begin(), requests.end(), lex_sort_cmp_);
+
+        auto line = map<coord_t, point_id>();
+        auto ranks_tree = makeRanksTree(knowns);
+        auto front = vector<point_id>(points.size()); // TODO: Optimize!
+
+        size_t known_i = 0;
+        for (point_id req : requests) {
+            while (known_i < knowns.size() && !lex_sort_cmp(req, knowns[known_i])) {
+                auto known = knowns[known_i];
+                known_i++;
+
+                // processing known point
+                rang rank = get_rank(known);
+                point_id old_known = front[rank];
+                if (old_known == 0) {
+                    insert_point(&line, ranks_tree, &front, known);
+                } else if (getY(old_known) > getY(known)) {
+                    remove_point(&line, ranks_tree, &front, old_known);
+                    insert_point(&line, ranks_tree, &front, known);
+                } else {
+                }
+            }
+
+            // processing request point
+            int new_rank = get_next_rank_after(ranks_tree, req);
+            update_rank(req, new_rank);
+        }
+    }
+
+
+};
+
+struct dumb_solver: solver {
+    dumb_solver(vector<point> points): solver(points) {
+        ranks.resize(points.size());
+    }
+
+    dumb_solver(vector<point> points, vector<rang> ranks): solver(points, ranks) { }
+
+    void solve_for_ids(vector<point_id> &ids) override {
+        sort_dumb(ids);
+    }
+
+    void sort_dumb(vector<point_id>& ids) {
+        auto rank_evals = vector<unique_ptr<cached<rang>>>(ids.size());
+        for (auto id : ids) {
+            rank_evals[id] = unique_ptr<cached<rang>>(
+              new cached<rang>([id, this, &ids, &rank_evals](){
+                rang max_rank = 0;
+                for (auto dep : ids) {
+                    if (getPoint(dep).dominates(getPoint(id))) {
+                        max_rank = max(max_rank, (*rank_evals[int(dep)])() + 1);
+                    }
+                }
+                return max_rank;
+            }));
+        }
+        for (auto id : ids) {
+            update_rank(id, (*rank_evals[id])());
+        }
+    }
+
+    void updateDumb(vector<point_id>& known, vector<point_id>& request) {
+        for (auto req : request) {
+            for (auto kn : known) {
+                if (getPoint(kn).dominates(getPoint(req))){
+                    update_rank(req, get_rank(kn) + 1);
+                }
+            }
+        }
+    }
+};
 
 
 int main(){
-    vector<int> values = vector<int>{1,2,3,4,5};
-    seg_tree<int, int, int>* tree = seg_tree<int, int, int>::make(identity<int>(), identity<int>(), [](int a, int b){ return a + b; }, values);
-    tree -> insert(3);
-    cout << tree -> request(range_t<int>(2, 3)) << endl;
+
+    auto p1 = point(vector<coord_t>({1, 2}));
+    auto p2 = point(vector<coord_t>({3, 4}));
+    auto p3 = point(vector<coord_t>({0, 0}));
+    auto points = vector<point>({p1, p2, p3});
+    auto ranks = sac_solver(points).solve();
+    for (auto r: ranks) {
+        cerr << r << " " << endl;
+    }
     return 0;
 }
 
