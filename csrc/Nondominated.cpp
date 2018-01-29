@@ -6,6 +6,8 @@
 #include <map>
 #include <vector>
 #include <memory>
+#include <functional>
+#include <time.h>
 
 using namespace std;
 
