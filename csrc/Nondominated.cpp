@@ -32,6 +32,11 @@ struct range_t {
 
 };
 
+template <class V>
+ostream& operator<<(ostream& os, range_t<V> r) {
+    return os << "[" << r.left << ", " << r.right << "]";
+}
+
 //
 // Utilities
 //
@@ -160,6 +165,7 @@ struct point {
 
     vector<coord_t> coords;
 
+    point(vector<coord_t>& cs): coords(cs) {}
     point(vector<coord_t>&& cs): coords(move(cs)) {}
 
     coord_t operator[](int i) {
@@ -190,8 +196,11 @@ int point::COORD_X = 0;
 int point::COORD_Y = 1;
 ostream& operator<<(ostream &os, point p) {
     os << "(";
-    for (size_t i = 0; i < p.dimensions(); i++)
-        os << p[i] << ", ";
+    for (size_t i = 0; i < p.dimensions(); i++) {
+        os << p[i];
+        if (i + 1 != p.dimensions())
+            os << ", ";
+    }
     os << ")";
     return os;
 }
@@ -208,8 +217,8 @@ struct point_id {
     operator int() {
         return i;
     }
-    bool operator<(const point_id&) const {
-        throw runtime_error("Don't call this comparision!");
+    bool operator<(const point_id& o) const {
+        return i < o.i;
     }
 };
 ostream& operator<<(ostream &os, point_id id) {
@@ -234,7 +243,7 @@ struct seg_tree {
         range_t<K> range;
         M summary;
 
-        tree(seg_tree* o, range_t<K> r): outer(o), range(r), summary() {
+        tree(seg_tree* o, range_t<K>& r): outer(o), range(r), summary() {
         }
 
         virtual M request(::range_t<K> reqRange) = 0;
@@ -259,7 +268,7 @@ struct seg_tree {
 
         void modify(K key, function<void(set<V>&)> modifier) override {
             if (!this -> range.contains(key))
-                throw logic_error("Modification visited leaf in nowhere");
+                return;
             modifier(this -> values);
             updateSummary();
         }
@@ -304,6 +313,7 @@ struct seg_tree {
         }
 
         void modify(K key, function<void(set<V>&)> modifier) override {
+            cerr << "modifying " << key << " in " << this -> range << endl;
             if (this -> left -> range.contains(key)) {
                 this -> left -> modify(key, modifier);
             } else {
@@ -329,8 +339,11 @@ struct seg_tree {
             keys.push_back(get_key(value));
         }
         sort(keys.begin(), keys.end());
+        cerr << "prepared" << endl;
         vector<K> uniqKeys = removeAdjacentDuplicates(keys);
+        cerr << "neq" << endl;
         auto tree = new seg_tree<K, V, M>(get_key, get_sum, add_sum);
+        cerr << "builing" << endl;
         tree -> buildTree(uniqKeys);
         return tree;
     }
@@ -361,8 +374,15 @@ struct seg_tree {
     }
 
     seg_tree(function<K(V)> get_key_, function<M(V)> get_sum_, function<M(M, M)> add_sum_)
-        : get_key(get_key_), get_sum(get_sum_), add_sum(add_sum_)
-        {}
+    {
+        cerr << "3";
+        get_key = get_key_;
+        cerr << "2";
+        get_sum = get_sum_;
+        cerr << "1";
+        add_sum = add_sum_;
+        cerr << "nya?" << endl;
+        }
 
     M request(range_t<K> range) {
         return str -> request(range);
@@ -381,7 +401,7 @@ struct seg_tree {
 template <class K, class V, class M>
 ostream& operator<<(ostream &os, seg_tree<K, V, M>& tree) {
     auto values = vector<V>();
-    tree.forEach([&os](V v){ os << v << " "; });
+    tree.str -> forEach([&os](V v){ os << v << " "; });
     return os << endl;
 }
 
@@ -436,8 +456,12 @@ struct sac_solver: solver {
     sac_solver(vector<point>& points): solver(points) {}
 
     void solve_for_ids(vector<point_id>& ids) override {
+        sort(ids.begin(), ids.end(), 
+             [&](const point_id& id1, const point_id& id2){ return lex_sort_cmp(id1, id2); });
         sortSAC(points[0].dimensions(), ids);
         for (auto id: ids) {
+            if (get_rank(id) == 0)
+                throw runtime_error("Rank remained unknown");
             ranks[int(id)]--;
         }
     }
@@ -463,7 +487,9 @@ struct sac_solver: solver {
     void sortSAC(int dimension, vector<point_id>& ids) {
         if (dimension <= 1) {
             throw runtime_error("Can't sort for so few dimensions");
-        } else if (ids.size() <= 1) {
+        } else if (ids.size() == 0) {
+        } else if (ids.size() == 1) {
+            update_rank(ids[0], 1);
         } else if (dimension == 2) {
             sortSweep(ids);
         } else {  // TODO: dump sort
@@ -478,9 +504,11 @@ struct sac_solver: solver {
                 zs.push_back(getPointCoord(id));
             }
             coord_t median = findMedian(zs);
+            cerr << "sort Median: " << median << endl;
 
             // Split
             split_t<point_id> cut = split(ids, median, getPointCoord);
+            cerr << "sort Split: " << cut << endl;
 
             // Call recursively
             sortSAC(dimension, cut.L);
@@ -511,6 +539,7 @@ struct sac_solver: solver {
                 zs.push_back(getPointCoord(id));
             }
             coord_t median = findMedian(zs);
+            cerr << "update Median " << median << endl;
 
             // Split
             split_t<point_id> knownCut = split(known, median, getPointCoord);
@@ -532,9 +561,9 @@ struct sac_solver: solver {
 
     ranks_tree_t* makeRanksTree(vector<point_id>& ids) {
         return ranks_tree_t::make(
-            [&](point_id id){ return getY(id); },
-            [&](point_id id){ return get_rank(id); },
-            [&](rang a, rang b){ return max(a, b); },
+            [this](point_id id){ return getY(id); },
+            [this](point_id id){ return get_rank(id); },
+            [](rang a, rang b){ return max(a, b); },
             ids);
     }
 
@@ -569,9 +598,7 @@ struct sac_solver: solver {
 
    
     void sortSweep(vector<point_id>& ids) {
-        sort(ids.begin(), ids.end(),
-             [&](const point_id& id1, const point_id& id2){ return lex_sort_cmp(id1, id2); });
-
+        cerr << "sortSweep" << endl;
         auto line = line_t();
         auto ranks_tree = makeRanksTree(ids);
 
@@ -597,13 +624,15 @@ struct sac_solver: solver {
     }
 
     void updateSweep(vector<point_id>& knowns, vector<point_id>& requests) {
-        auto lex_sort_cmp_ = [&](const point_id& id1, const point_id& id2){ return lex_sort_cmp(id1, id2); };
-        sort(knowns.begin(), knowns.end(), lex_sort_cmp_);
-        sort(requests.begin(), requests.end(), lex_sort_cmp_);
-
+        cerr << "updateSweep" << endl;
         auto line = map<coord_t, point_id>();
         auto ranks_tree = makeRanksTree(knowns);
         auto front = vector<point_id>(points.size()); // TODO: Optimize!
+
+        cerr << "tree " << *ranks_tree << endl;
+
+        ranks_tree -> request(range_t<coord_t>(1, 2));
+        cerr << "updatet " << endl;
 
         size_t known_i = 0;
         for (point_id req : requests) {
@@ -633,11 +662,11 @@ struct sac_solver: solver {
 };
 
 struct dumb_solver: solver {
-    dumb_solver(vector<point> points): solver(points) {
+    dumb_solver(vector<point>& points): solver(points) {
         ranks.resize(points.size());
     }
 
-    dumb_solver(vector<point> points, vector<rang> ranks): solver(points, ranks) { }
+    dumb_solver(vector<point>& points, vector<rang>& ranks): solver(points, ranks) { }
 
     void solve_for_ids(vector<point_id> &ids) override {
         sort_dumb(ids);
@@ -673,16 +702,64 @@ struct dumb_solver: solver {
     }
 };
 
+//
+// Random
+//
+struct gen {
+    static size_t seed;
+
+    static void refresh_seed(size_t s) {
+        seed = s * 237 * 237;
+    }
+
+    static int int_g(size_t k) {
+        size_t a = (seed + 99139) * 99139;
+        seed = a / 95279;
+        size_t n = a % 95279;
+        return (int) (n % (2 * k + 1)) - k;
+    }
+
+    static point point_g(int d) {
+        auto v = vector<coord_t>();
+        for (int i = 0; i < d; i++) {
+            v.push_back(int_g(100));
+        }
+        return point(v);
+    }
+
+    static vector<point> points_g(int n, int d) {
+        auto points = vector<point>();
+        for (int i = 0; i < n; i++)
+            points.push_back(point_g(d));
+        return points;
+    }
+};
+size_t gen::seed;
+
+template <class V>
+ostream& operator<<(ostream& os, vector<V> vs) {
+    os << "{";
+    for (size_t i = 0; i < vs.size(); i++) {
+        os << vs[i];
+        if (i != vs.size() - 1)
+            os << ", ";
+    }
+    return os << "}";
+}
 
 int main(){
-
-    auto p1 = point(vector<coord_t>({1, 2}));
-    auto p2 = point(vector<coord_t>({3, 4}));
-    auto p3 = point(vector<coord_t>({0, 0}));
-    auto points = vector<point>({p1, p2, p3});
-    auto ranks = sac_solver(points).solve();
-    for (auto r: ranks) {
-        cerr << r << " " << endl;
+    for (int i = 1; i <= 1000; i++) {
+        cout << "Iteration #" << i << endl;
+        gen::refresh_seed(i);
+        auto points = gen::points_g(2, 3);
+        auto ranks_sac = sac_solver(points).solve();
+        auto ranks_dumb = dumb_solver(points).solve();
+        if (ranks_sac != ranks_dumb) {
+            cout << "For " << points << endl;
+            cout << "expected " << ranks_dumb << ", got" << ranks_sac << endl;
+            return 1;
+        }
+        cout << "OK!" << endl;
     }
     return 0;
 }
